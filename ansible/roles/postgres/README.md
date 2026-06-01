@@ -26,10 +26,14 @@ En prod ils sont **injectes depuis Vault** ; aucun secret reel n'est commite.
 ## Test (idempotence prouvee)
 Scenario Molecule (driver docker, conteneurs freres — Linux natif, pas de DinD) :
 
+Le scenario est **autonome** : il place lui-meme le `roles_path` via
+`ansible.env.ANSIBLE_ROLES_PATH` dans `molecule.yml`, derive de
+`${MOLECULE_SCENARIO_DIRECTORY}` (interpole par Molecule, chemin absolu).
+Aucun `export ANSIBLE_ROLES_PATH` shell n'est requis ; le test passe quel que
+soit le repertoire de lancement.
+
 ```bash
 source .venv-ansible/bin/activate
-export ANSIBLE_COLLECTIONS_PATH=$PWD/.venv-ansible/collections
-export ANSIBLE_ROLES_PATH=$PWD/ansible/roles
 cd ansible/roles/postgres
 molecule test
 ```

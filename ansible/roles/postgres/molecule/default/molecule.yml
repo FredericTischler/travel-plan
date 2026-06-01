@@ -26,6 +26,18 @@ platforms:
     # Les modules community.postgresql tournent DANS l'instance (docker exec),
     # ils joignent postgres via localhost:5432.
 
+# Molecule 26.x : l'environnement du provisioner est lu depuis le bloc
+# top-level `ansible:` (config["ansible"]["env"]), pas depuis `provisioner.env`
+# (verifie dans le code : provisioner/ansible.py -> env lit config["ansible"]["env"]).
+# MOLECULE_SCENARIO_DIRECTORY est interpole DANS molecule.yml par Molecule lui-meme
+# (config.py: "MOLECULE_SCENARIO_DIRECTORY": self.scenario.directory).
+# Chemin absolu : <repo>/ansible/roles/postgres/molecule/default
+#   /../../.. => <repo>/ansible/roles  => `- role: postgres` se resout,
+# quel que soit le repertoire de lancement. Plus aucun env shell requis.
+ansible:
+  env:
+    ANSIBLE_ROLES_PATH: "${MOLECULE_SCENARIO_DIRECTORY}/../../.."
+
 provisioner:
   name: ansible
   config_options:
