@@ -1,0 +1,110 @@
+---
+# roles/postgres/tasks/main.yml
+#
+# Modele operatoire : Ansible PROVISIONNE et REND le fragment compose ;
+# docker-compose ORCHESTRE. Ce role n'utilise PAS docker_container en prod :
+# il rend un fragment de service Compose, puis provisionne l'instance via
+# les modules community.postgresql (idempotents).
+
+# --------------------------------------------------------------------------
+# 1) Rendu du fragment de service Compose (templating pur, inoffensif)
+# --------------------------------------------------------------------------
+- name: "Ensure compose fragment directory exists"
+  ansible.builtin.file:
+    path: "{{ postgres_compose_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: "Render PostgreSQL compose service fragment"
+  ansible.builtin.template:
+    src: "compose.postgres.yml.j2"
+    dest: "{{ postgres_compose_dir }}/compose.postgres.yml"
+    mode: "0644"
+
+# --------------------------------------------------------------------------
+# 2) Provisioning de l'instance
+#    Ordre : users d'abord (ils sont owner des bases), puis bases, puis privs.
+#    PGOPTIONS force scram-sha-256 pour la coherence du hash (idempotence).
+# --------------------------------------------------------------------------
+- name: "Create application roles (least privilege, NOSUPERUSER)"
+  community.postgresql.postgresql_user:
+    name: "{{ item.name }}"
+    password: "{{ item.password }}"
+    role_attr_flags: "NOSUPERUSER,NOCREATEDB,NOCREATEROLE,LOGIN"
+    state: present
+    login_host: "{{ postgres_login_host }}"
+    login_port: "{{ postgres_login_port }}"
+    login_user: "{{ postgres_superuser }}"
+    login_password: "{{ postgres_superuser_password }}"
+  environment:
+    PGOPTIONS: "-c password_encryption=scram-sha-256"
+  loop: "{{ postgres_app_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+
+- name: "Create application databases (owned by their dedicated role)"
+  community.postgresql.postgresql_db:
+    name: "{{ item.name }}"
+    owner: "{{ item.owner }}"
+    encoding: "UTF8"
+    state: present
+    login_host: "{{ postgres_login_host }}"
+    login_port: "{{ postgres_login_port }}"
+    login_user: "{{ postgres_superuser }}"
+    login_password: "{{ postgres_superuser_password }}"
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# --------------------------------------------------------------------------
+# 3) Cloisonnement (moindre privilege) : revoquer le CONNECT public, puis
+#    n'autoriser que le proprietaire. payment_user ne peut PAS joindre
+#    identity_db et reciproquement.
+# --------------------------------------------------------------------------
+- name: "Revoke CONNECT from PUBLIC on each database"
+  community.postgresql.postgresql_privs:
+    login_db: "{{ item.name }}"
+    type: database
+    privs: "CONNECT"
+    roles: "PUBLIC"
+    state: absent
+    login_host: "{{ postgres_login_host }}"
+    login_port: "{{ postgres_login_port }}"
+    login_user: "{{ postgres_superuser }}"
+    login_password: "{{ postgres_superuser_password }}"
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: "Grant CONNECT only to the owning role on each database"
+  community.postgresql.postgresql_privs:
+    login_db: "{{ item.name }}"
+    type: database
+    privs: "CONNECT"
+    roles: "{{ item.owner }}"
+    state: present
+    login_host: "{{ postgres_login_host }}"
+    login_port: "{{ postgres_login_port }}"
+    login_user: "{{ postgres_superuser }}"
+    login_password: "{{ postgres_superuser_password }}"
+  loop: "{{ postgres_databases }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+# --------------------------------------------------------------------------
+# 4) Extensions : uniquement si explicitement demandees (vide par defaut).
+# --------------------------------------------------------------------------
+- name: "Create requested extensions (none by default)"
+  community.postgresql.postgresql_ext:
+    name: "{{ item.name }}"
+    login_db: "{{ item.db }}"
+    state: present
+    login_host: "{{ postgres_login_host }}"
+    login_port: "{{ postgres_login_port }}"
+    login_user: "{{ postgres_superuser }}"
+    login_password: "{{ postgres_superuser_password }}"
+  loop: "{{ postgres_extensions }}"
+  loop_control:
+    label: "{{ item.name | default('none') }}"
+  when: postgres_extensions | length > 0

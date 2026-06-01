@@ -1,0 +1,57 @@
+---
+# roles/postgres/defaults/main.yml
+#
+# Variables d'INFRASTRUCTURE du role postgres.
+# Le role ne fait QUE : rendre un fragment de service Compose + provisionner
+# l'instance (2 bases vides, 2 comptes a droits limites, leurs privileges).
+# Aucune table / index / contrainte metier : ca releve de Flyway cote services.
+
+# --- Image (tag epingle, jamais latest) -------------------------------------
+# Tag verifie via `docker manifest inspect postgres:17.5-bookworm` (EXISTS).
+# 17.x = majeure stable courante ; patch precis ; variant bookworm (Debian).
+postgres_image: "postgres:17.5-bookworm"
+
+# --- Service / conteneur rendu dans le fragment Compose ---------------------
+postgres_service_name: "postgres"
+postgres_container_name: "travel-plan-postgres"
+# Reseau interne : base JAMAIS exposee a l'hote (cf. docs §4, data-net).
+postgres_network: "data-net"
+# Garde-fou RAM 8 Go (cf. docs §4) : limite memoire raisonnable.
+postgres_mem_limit: "256m"
+# Repertoire ou Ansible rend le fragment compose (surcharge en prod / molecule).
+postgres_compose_dir: "/opt/travel-plan/postgres"
+# Volume nomme pour la persistance des donnees.
+postgres_data_volume: "travel-plan-postgres-data"
+
+# --- Superuser de provisioning (sert UNIQUEMENT a provisionner) -------------
+# En prod : injecte depuis Vault. Ici : valeur de dev evidente a surcharger.
+postgres_superuser: "postgres"
+postgres_superuser_password: "changeme_postgres_superuser"  # noqa: surcharger via Vault
+
+# Cible de connexion pour les taches de provisioning (modules community.postgresql).
+# En prod ces taches tournent contre l'instance via le reseau ; ici parametrable.
+postgres_login_host: "localhost"
+postgres_login_port: 5432
+
+# --- Bases applicatives (vides : juste l'instance + les bases) --------------
+postgres_databases:
+  - name: "identity_db"
+    owner: "identity_user"
+  - name: "payment_db"
+    owner: "payment_user"
+
+# --- Comptes applicatifs a DROITS LIMITES (moindre privilege) ---------------
+# NOSUPERUSER,NOCREATEDB,NOCREATEROLE : aucun compte applicatif superuser.
+# Mots de passe = valeurs de dev evidentes, A SURCHARGER VIA VAULT en prod.
+postgres_app_users:
+  - name: "identity_user"
+    password: "changeme_identity_user"   # noqa: surcharger via Vault
+    db: "identity_db"
+  - name: "payment_user"
+    password: "changeme_payment_user"    # noqa: surcharger via Vault
+    db: "payment_db"
+
+# --- Extensions -------------------------------------------------------------
+# AUCUNE par defaut : citext/uuid-ossp relevent du schema Flyway, pas de l'infra.
+# Ne pas ajouter d'extension "au cas ou".
+postgres_extensions: []
