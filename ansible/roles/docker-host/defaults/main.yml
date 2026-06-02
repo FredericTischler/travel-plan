@@ -37,7 +37,7 @@ docker_host_repo_component: stable
 # - lookup('env','USER') est évalué sur le CONTRÔLEUR : sous `sudo ansible-playbook`
 #   ou `ansible-playbook -K`, USER reste l'utilisateur d'origine (pas root), ce qui
 #   est exactement ce qu'on veut. C'est plus fiable que SUDO_USER (absent si pas sudo)
-#   et qu'ansible_user_id (= root sous become).
+#   et qu'ansible_facts['user_id'] (= root sous become).
 # Surchargez cette liste si besoin (ex. -e '{"docker_host_users":["alice","bob"]}').
 docker_host_users:
   - "{{ lookup('ansible.builtin.env', 'USER') }}"

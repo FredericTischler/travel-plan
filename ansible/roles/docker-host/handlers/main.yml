@@ -1,7 +1,8 @@
 ---
 # handlers/main.yml — role docker-host
-# deb822_repository ne met pas à jour le cache APT lui-même ; on le fait via handler,
-# déclenché uniquement si le dépôt a changé.
-- name: Recharger le cache APT
-  ansible.builtin.apt:
-    update_cache: true
+# Aucun handler.
+# Le rafraîchissement du cache APT n'est PLUS un handler global (ansible.builtin.apt
+# update_cache est forcément GLOBAL et couplerait l'install Docker aux autres dépôts).
+# Il est désormais fait en ligne dans tasks/main.yml via un apt-get CIBLÉ sur le seul
+# dépôt Docker (Dir::Etc::sourcelist / sourceparts), changed_when:false.
+[]
