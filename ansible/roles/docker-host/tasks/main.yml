@@ -1,0 +1,97 @@
+---
+# tasks/main.yml — role docker-host
+# Ordre : pré-check conflits -> prérequis APT -> clé GPG -> dépôt deb822 -> install
+#         -> démon systemd -> groupe docker.
+# Tout en modules natifs (idempotents). Aucun shell/command.
+
+# 1) Pré-check NON DESTRUCTIF des paquets distro conflictuels.
+- name: Collecter les facts paquets installés
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Échouer si des paquets Docker conflictuels (distro) sont présents
+  ansible.builtin.fail:
+    msg: >-
+      Des paquets conflictuels sont installés :
+      {{ docker_host_conflicting_packages | select('in', ansible_facts.packages) | list }}.
+      Retirez-les MANUELLEMENT avant de relancer ce rôle
+      (ex. `sudo apt-get remove <paquet>` puis `sudo apt-get autoremove`).
+      Le rôle ne supprime rien lui-même (sécurité sur machine réelle).
+  when: >-
+    docker_host_conflicting_packages
+    | select('in', ansible_facts.packages)
+    | list | length > 0
+
+# 2) Prérequis du dépôt APT.
+- name: Installer les prérequis APT (ca-certificates, curl)
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+
+# 3) Clé GPG officielle Docker.
+- name: Créer le répertoire des keyrings APT
+  ansible.builtin.file:
+    path: "{{ docker_host_keyring_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Télécharger la clé GPG Docker
+  ansible.builtin.get_url:
+    url: "{{ docker_host_gpg_key_url }}"
+    dest: "{{ docker_host_gpg_key_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    # get_url ne re-télécharge pas si la destination existe déjà -> idempotent.
+
+# 4) Dépôt Docker au format deb822.
+- name: Configurer le dépôt APT Docker (deb822)
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: "{{ docker_host_repo_uri }}"
+    suites: "{{ ansible_distribution_release }}"
+    components: "{{ docker_host_repo_component }}"
+    architectures: "{{ docker_host_arch }}"
+    signed_by: "{{ docker_host_gpg_key_path }}"
+    enabled: true
+    state: present
+  vars:
+    # Mapping arch Ansible -> arch dpkg/APT (.get() pour ne pas lever de KeyError
+    # si l'arch n'est pas dans la table : on retombe sur ansible_architecture).
+    docker_host_arch: >-
+      {{ {'x86_64': 'amd64', 'aarch64': 'arm64', 'armv7l': 'armhf'}.get(ansible_architecture, ansible_architecture) }}
+  notify: Recharger le cache APT
+
+# Le module deb822_repository ne met PAS à jour le cache lui-même (cf. notes ansible-doc).
+# On force le flush du handler avant d'installer pour que le cache reflète le nouveau dépôt.
+- name: Appliquer la mise à jour du cache APT avant install
+  ansible.builtin.meta: flush_handlers
+
+# 5) Installation des paquets Docker CE + Compose v2.
+- name: Installer Docker CE, CLI, containerd, buildx et compose plugin
+  ansible.builtin.apt:
+    name: "{{ docker_host_packages }}"
+    state: present
+    update_cache: true
+
+# 6) Démon Docker : activé au boot + démarré.
+- name: Activer et démarrer le service docker
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+# 7) Accès au socket Docker sans sudo (re-login requis pour prise d'effet).
+- name: Ajouter les utilisateurs au groupe docker
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_host_users }}"
+  when: item | length > 0

@@ -1,0 +1,7 @@
+---
+# handlers/main.yml — role docker-host
+# deb822_repository ne met pas à jour le cache APT lui-même ; on le fait via handler,
+# déclenché uniquement si le dépôt a changé.
+- name: Recharger le cache APT
+  ansible.builtin.apt:
+    update_cache: true
