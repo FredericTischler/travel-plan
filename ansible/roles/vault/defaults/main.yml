@@ -1,0 +1,108 @@
+---
+# roles/vault/defaults/main.yml
+#
+# Variables d'INFRASTRUCTURE du role vault.
+# Le role ne fait QUE : rendre un fragment de service Compose (Vault dev mode)
+# + provisionner Vault via modules community.hashi_vault (idempotents) :
+#   - s'assurer du moteur KV v2 sur secret/ (deja monte en dev mode -> check),
+#   - ecrire les secrets runtime (creds DB, cles API) en read-before-write,
+#   - poser les policies par service (moindre privilege, cf. docs §5).
+
+# === RECONCILIATION DEV MODE <-> docs/architecture-decisions.md §5 ===========
+# Vault tourne en DEV MODE : auto-unsealed, EN MEMOIRE, NON persistant.
+# Consequences actees (ne pas sur-ingenierer) :
+#   - AUCUNE logique d'unseal/persistance : dev mode est deja unsealed.
+#   - En dev mode, un secrets engine KV v2 est DEJA monte sur `secret/` :
+#     on VERIFIE sa presence (sys/mounts), on ne fait PAS un enable aveugle
+#     (activer un moteur deja monte ECHOUE).
+#   - La "nuance bootstrap §5" se reduit ici a : le root token dev ne se
+#     commite JAMAIS en clair. Il est FIXE via VAULT_DEV_ROOT_TOKEN_ID, source
+#     d'une VARIABLE -> en prod chiffree via ansible-vault ; en Molecule fixture.
+# =============================================================================
+
+# --- Image (tag epingle, jamais latest) -------------------------------------
+# Tag verifie via `docker manifest inspect hashicorp/vault:1.18.3` (EXISTS).
+vault_image: "hashicorp/vault:1.18.3"
+
+# --- Service / conteneur rendu dans le fragment Compose ---------------------
+vault_service_name: "vault"
+vault_container_name: "travel-plan-vault"
+# Reseau interne : Vault JAMAIS expose a l'hote (cf. docs §4, data-net).
+# Seul Traefik expose (§4). Le fragment ne publie AUCUN port.
+vault_network: "data-net"
+# Garde-fou RAM 8 Go (cf. docs §4) : Vault dev mode ~60 Mo -> limite serree.
+vault_mem_limit: "96m"
+# Repertoire ou Ansible rend le fragment compose (surcharge en prod / molecule).
+vault_compose_dir: "/opt/travel-plan/vault"
+# Adresse d'ecoute interne de Vault dev mode (dans le conteneur).
+vault_dev_listen_address: "0.0.0.0:8200"
+
+# --- Root token de dev (FIXE, source d'une variable, JAMAIS en clair commite)
+# En prod : chiffre via ansible-vault. En Molecule : fixture (group_vars/converge).
+# Placeholder ici pour documenter le contrat ; il DOIT etre surcharge.
+vault_dev_root_token: "changeme_vault_root_token"  # noqa: surcharger via ansible-vault
+
+# --- Cible de connexion pour le provisioning (modules community.hashi_vault) -
+# En prod ces taches visent Vault via le reseau ; ici parametrable.
+# En Molecule : Vault joignable via un port de TEST publie cote plateforme.
+vault_addr: "http://localhost:8200"
+
+# --- Moteur KV v2 ------------------------------------------------------------
+# En dev mode `secret/` est deja monte en KV v2 : on VERIFIE, on n'enable pas.
+vault_kv_mount: "secret"
+
+# --- Secrets runtime (valeurs JAMAIS en dur : placeholders changeme_*) -------
+# Injectes par Vault/ansible-vault en prod. Les NOMS de cles forment le
+# contrat homogene consomme par les services (coherent avec le role postgres).
+#
+# Coherence avec ansible/roles/postgres/defaults/main.yml :
+#   identity -> identity_user / changeme_identity_user / identity_db
+#   payment  -> payment_user  / changeme_payment_user  / payment_db
+# travel : Neo4j (role neo4j absent) -> placeholders, memes NOMS de cles.
+vault_secrets:
+  - path: "identity/db"
+    data:
+      username: "identity_user"
+      password: "changeme_identity_user"   # noqa: injecte par Vault en prod
+      dbname: "identity_db"
+      host: "postgres"
+      port: "5432"
+  - path: "payment/db"
+    data:
+      username: "payment_user"
+      password: "changeme_payment_user"     # noqa: injecte par Vault en prod
+      dbname: "payment_db"
+      host: "postgres"
+      port: "5432"
+  - path: "payment/stripe"
+    data:
+      api_key: "changeme_stripe_api_key"          # noqa: injecte par Vault en prod
+      secret_key: "changeme_stripe_secret_key"    # noqa: injecte par Vault en prod
+  - path: "payment/paypal"
+    data:
+      client_id: "changeme_paypal_client_id"          # noqa: injecte par Vault en prod
+      client_secret: "changeme_paypal_client_secret"  # noqa: injecte par Vault en prod
+  - path: "travel/db"
+    data:
+      username: "neo4j"
+      password: "changeme_neo4j"   # noqa: injecte par Vault en prod
+      host: "neo4j"
+      port: "7687"
+
+# --- Policies PAR SERVICE (moindre privilege, cf. docs §5) -------------------
+# ATTENTION KV v2 : les capacites ACL visent secret/data/<svc>/* ET
+# secret/metadata/<svc>/* (PAS secret/<svc>/*). Aucune policy ne lit le
+# perimetre d'une autre.
+vault_policies:
+  - name: "identity-policy"
+    paths:
+      "secret/data/identity/*": ["read"]
+      "secret/metadata/identity/*": ["read", "list"]
+  - name: "payment-policy"
+    paths:
+      "secret/data/payment/*": ["read"]
+      "secret/metadata/payment/*": ["read", "list"]
+  - name: "travel-policy"
+    paths:
+      "secret/data/travel/*": ["read"]
+      "secret/metadata/travel/*": ["read", "list"]
