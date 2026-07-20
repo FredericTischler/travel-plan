@@ -1,0 +1,23 @@
+---
+# roles/compose-assembly/defaults/main.yml
+#
+# Assemble les fragments Compose rendus par les rôles postgres/vault/neo4j
+# en un point d'entrée unique. Déclare les réseaux Docker (Ansible en est propriétaire).
+
+# Répertoire racine où les fragments ont été rendus ET où le docker-compose.yml
+# top-level sera rendu (chemin cohérent avec les defaults des 3 rôles).
+assembly_compose_dir: "/opt/travel-plan"
+
+# Chemins RELATIFS à assembly_compose_dir (cohérents avec les defaults de chaque rôle).
+assembly_postgres_fragment: "postgres/compose.postgres.yml"
+assembly_vault_fragment:    "vault/compose.vault.yml"
+assembly_neo4j_fragment:    "neo4j/compose.neo4j.yml"
+
+# Réseaux Docker à créer (Ansible en est propriétaire, driver bridge).
+assembly_networks:
+  - name: "edge-net"
+    driver: "bridge"
+  - name: "backend-net"
+    driver: "bridge"
+  - name: "data-net"
+    driver: "bridge"

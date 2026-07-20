@@ -1,0 +1,33 @@
+#jinja2: trim_blocks: True, lstrip_blocks: True
+# {{ ansible_managed }}
+# Point d'entree Compose pour Travel-Plan.
+# Assemble les fragments rendus par les roles Ansible postgres / vault / neo4j.
+# Réseaux créés par Ansible (community.docker.docker_network) — externes à Compose.
+#
+# PROFILS (cf. docs/architecture-decisions.md §4) :
+#   core : postgres + vault (dev quotidien, ~350 Mo, laisse place à IDE + navigateur)
+#   full : postgres + vault + neo4j (intégration + démo, IDE fermé)
+#
+# USAGE :
+#   docker compose --profile core up -d    # dev quotidien
+#   docker compose --profile full up -d    # stack complète
+#   docker compose --profile full down     # nettoyage
+
+include:
+  - path: {{ assembly_postgres_fragment }}
+  - path: {{ assembly_vault_fragment }}
+  - path: {{ assembly_neo4j_fragment }}
+
+services:
+  # Profils appliqués par merge sur les services inclus (Compose spec : les attributs
+  # du fichier top-level FUSIONNENT avec les services inclus de même nom).
+  postgres:
+    profiles: [core, full]
+
+  vault:
+    profiles: [core, full]
+
+  # Neo4j = poste RAM le plus lourd (~600 Mo–1 Go, cf. §4).
+  # Exclu du profil core pour libérer ~1 Go en dev quotidien.
+  neo4j:
+    profiles: [full]

@@ -22,18 +22,21 @@
     path: "{{ vault_compose_dir }}"
     state: directory
     mode: "0755"
+  tags: [compose_fragment]
 
 - name: "Render Vault compose service fragment"
   ansible.builtin.template:
     src: "compose.vault.yml.j2"
     dest: "{{ vault_compose_dir }}/compose.vault.yml"
     mode: "0644"
+  tags: [compose_fragment]
 
 # --------------------------------------------------------------------------
 # 2) Moteur KV v2 sur secret/ : VERIFIER, ne pas enable aveugle.
 #    En dev mode `secret/` est deja monte en KV v2 -> ok/skip, jamais changed.
 # --------------------------------------------------------------------------
 - name: "Read current secrets engines (sys/mounts)"
+  tags: [provision]
   community.hashi_vault.vault_read:
     url: "{{ vault_addr }}"
     auth_method: token
@@ -43,6 +46,7 @@
   no_log: true
 
 - name: "Assert KV v2 is mounted on secret/ (dev mode mounts it; we verify)"
+  tags: [provision]
   ansible.builtin.assert:
     that:
       - "(vault_kv_mount ~ '/') in vault_mounts.data.data"
@@ -60,6 +64,7 @@
 #    Valeurs jamais en dur : toutes via vault_secrets (defaults).
 # --------------------------------------------------------------------------
 - name: "Write runtime secrets (KV v2, read-before-write => idempotent)"
+  tags: [provision]
   community.hashi_vault.vault_kv2_write:
     url: "{{ vault_addr }}"
     auth_method: token
@@ -81,6 +86,7 @@
 #    n'ecrit QUE si differe. 2e run => changed=0.
 # --------------------------------------------------------------------------
 - name: "Render desired policy HCL for each service"
+  tags: [provision]
   ansible.builtin.set_fact:
     vault_desired_policies: >-
       {{ vault_desired_policies | default([]) + [{
@@ -92,6 +98,7 @@
     label: "{{ item.name }}"
 
 - name: "Read existing policies (tolerate absence)"
+  tags: [provision]
   community.hashi_vault.vault_read:
     url: "{{ vault_addr }}"
     auth_method: token
@@ -107,6 +114,7 @@
 # Comparaison NORMALISEE : on retire tous les blancs (espaces, sauts de ligne)
 # des deux cotes pour neutraliser la canonicalisation HCL de Vault.
 - name: "Write policy only when normalized HCL differs (idempotent)"
+  tags: [provision]
   community.hashi_vault.vault_write:
     url: "{{ vault_addr }}"
     auth_method: token

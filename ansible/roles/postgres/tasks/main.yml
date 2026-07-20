@@ -14,12 +14,14 @@
     path: "{{ postgres_compose_dir }}"
     state: directory
     mode: "0755"
+  tags: [compose_fragment]
 
 - name: "Render PostgreSQL compose service fragment"
   ansible.builtin.template:
     src: "compose.postgres.yml.j2"
     dest: "{{ postgres_compose_dir }}/compose.postgres.yml"
     mode: "0644"
+  tags: [compose_fragment]
 
 # --------------------------------------------------------------------------
 # 2) Provisioning de l'instance
@@ -27,6 +29,7 @@
 #    PGOPTIONS force scram-sha-256 pour la coherence du hash (idempotence).
 # --------------------------------------------------------------------------
 - name: "Create application roles (least privilege, NOSUPERUSER)"
+  tags: [provision]
   community.postgresql.postgresql_user:
     name: "{{ item.name }}"
     password: "{{ item.password }}"
@@ -44,6 +47,7 @@
   no_log: true
 
 - name: "Create application databases (owned by their dedicated role)"
+  tags: [provision]
   community.postgresql.postgresql_db:
     name: "{{ item.name }}"
     owner: "{{ item.owner }}"
@@ -63,6 +67,7 @@
 #    identity_db et reciproquement.
 # --------------------------------------------------------------------------
 - name: "Revoke CONNECT from PUBLIC on each database"
+  tags: [provision]
   community.postgresql.postgresql_privs:
     login_db: "{{ item.name }}"
     type: database
@@ -78,6 +83,7 @@
     label: "{{ item.name }}"
 
 - name: "Grant CONNECT only to the owning role on each database"
+  tags: [provision]
   community.postgresql.postgresql_privs:
     login_db: "{{ item.name }}"
     type: database
@@ -96,6 +102,7 @@
 # 4) Extensions : uniquement si explicitement demandees (vide par defaut).
 # --------------------------------------------------------------------------
 - name: "Create requested extensions (none by default)"
+  tags: [provision]
   community.postgresql.postgresql_ext:
     name: "{{ item.name }}"
     login_db: "{{ item.db }}"
