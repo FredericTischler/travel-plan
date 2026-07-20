@@ -60,6 +60,12 @@ vault_kv_mount: "secret"
 #   payment  -> payment_user  / changeme_payment_user  / payment_db
 # travel : Neo4j (role neo4j absent) -> placeholders, memes NOMS de cles.
 vault_secrets:
+  # Secret d'ADMINISTRATION (superuser Postgres). HORS perimetre des policies service.
+  # Seul Ansible (token root) peut le lire. identity/payment/travel-policy n'y accedent pas.
+  - path: "infra/postgres-superuser"
+    data:
+      password: "changeme_postgres_superuser"  # noqa: surcharger via ansible-vault en prod
+  # Secrets APPLICATIFS (inchanges) :
   - path: "identity/db"
     data:
       username: "identity_user"

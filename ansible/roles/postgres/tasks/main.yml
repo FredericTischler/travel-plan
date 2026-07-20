@@ -7,6 +7,40 @@
 # les modules community.postgresql (idempotents).
 
 # --------------------------------------------------------------------------
+# LECTURE VAULT — compose_fragment (conditionnel)
+# CHEMIN NON COUVERT PAR MOLECULE : postgres_vault_read: false par defaut
+# skipe ces taches en Molecule. Non-regression = re-jouer la sequence manuelle
+# apres toute modification de cette logique.
+# --------------------------------------------------------------------------
+- name: "Read postgres superuser secret from Vault (postgres_vault_read=true seulement)"
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ vault_addr }}"
+    auth_method: token
+    token: "{{ vault_dev_root_token }}"
+    engine_mount_point: "{{ vault_kv_mount }}"
+    path: "infra/postgres-superuser"
+  register: _vault_pg_super
+  no_log: true
+  when: postgres_vault_read | bool
+  tags: [compose_fragment]
+
+- name: "Set postgres_superuser_password from Vault secret"
+  ansible.builtin.set_fact:
+    postgres_superuser_password: "{{ _vault_pg_super.secret.password }}"
+  no_log: true
+  when: postgres_vault_read | bool
+  tags: [compose_fragment]
+
+- name: "Write Vault secret to .env (Docker Compose le resout au up, pas bake dans le YAML)"
+  ansible.builtin.template:
+    src: "dotenv.j2"
+    dest: "{{ postgres_runtime_env_path }}"
+    mode: "0600"
+  no_log: true
+  when: postgres_vault_read | bool
+  tags: [compose_fragment]
+
+# --------------------------------------------------------------------------
 # 1) Rendu du fragment de service Compose (templating pur, inoffensif)
 # --------------------------------------------------------------------------
 - name: "Ensure compose fragment directory exists"
@@ -28,6 +62,58 @@
 #    Ordre : users d'abord (ils sont owner des bases), puis bases, puis privs.
 #    PGOPTIONS force scram-sha-256 pour la coherence du hash (idempotence).
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# LECTURE VAULT — provision (conditionnel)
+# Voir commentaire ci-dessus : chemin non couvert par Molecule.
+# --------------------------------------------------------------------------
+- name: "Read provisioning credentials from Vault (infra + app users)"
+  community.hashi_vault.vault_kv2_get:
+    url: "{{ vault_addr }}"
+    auth_method: token
+    token: "{{ vault_dev_root_token }}"
+    engine_mount_point: "{{ vault_kv_mount }}"
+    path: "{{ item }}"
+  loop:
+    - "infra/postgres-superuser"
+    - "identity/db"
+    - "payment/db"
+  register: _vault_provision_creds
+  no_log: true
+  when: postgres_vault_read | bool
+  tags: [provision]
+
+- name: "Set postgres_superuser_password from Vault (pour la connexion de provisioning)"
+  ansible.builtin.set_fact:
+    postgres_superuser_password: >-
+      {{ _vault_provision_creds.results
+         | selectattr('item', 'equalto', 'infra/postgres-superuser')
+         | map(attribute='secret.password')
+         | first }}
+  no_log: true
+  when: postgres_vault_read | bool
+  tags: [provision]
+
+- name: "Override postgres_app_users passwords from Vault"
+  ansible.builtin.set_fact:
+    postgres_app_users:
+      - name: identity_user
+        password: >-
+          {{ _vault_provision_creds.results
+             | selectattr('item', 'equalto', 'identity/db')
+             | map(attribute='secret.password')
+             | first }}
+        db: identity_db
+      - name: payment_user
+        password: >-
+          {{ _vault_provision_creds.results
+             | selectattr('item', 'equalto', 'payment/db')
+             | map(attribute='secret.password')
+             | first }}
+        db: payment_db
+  no_log: true
+  when: postgres_vault_read | bool
+  tags: [provision]
+
 - name: "Create application roles (least privilege, NOSUPERUSER)"
   tags: [provision]
   community.postgresql.postgresql_user:

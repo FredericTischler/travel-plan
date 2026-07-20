@@ -108,6 +108,24 @@
         fail_msg: "Un chemin de secret manque ou ses cles ne correspondent pas au contrat."
         success_msg: "Les 5 chemins existent avec les cles attendues."
 
+    # ---- 2bis) Secret d'administration infra/postgres-superuser -------------
+    - name: "Read infra/postgres-superuser (admin secret, hors policies service)"
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        auth_method: token
+        token: "{{ root_token }}"
+        engine_mount_point: "{{ kv_mount }}"
+        path: "infra/postgres-superuser"
+      register: s_pg_super
+      no_log: true
+
+    - name: "Assert infra/postgres-superuser present avec cle password"
+      ansible.builtin.assert:
+        that:
+          - "'password' in s_pg_super.data.data"
+        fail_msg: "infra/postgres-superuser absent ou sans cle password."
+        success_msg: "infra/postgres-superuser OK (cle password presente)."
+
     # ---- 3) Les 3 policies par service existent -----------------------------
     - name: "Read the 3 service policies"
       community.hashi_vault.vault_read:
@@ -142,6 +160,15 @@
           - "'payment' not in (policies_read.results[2].data.data.policy)"
         fail_msg: "Une policy manque ou fuit sur le perimetre d'un autre service."
         success_msg: "Les 3 policies existent et restent cloisonnees sur leur perimetre."
+
+    - name: "Assert infra/* absent de toutes les policies service (perimetre admin uniquement)"
+      ansible.builtin.assert:
+        that:
+          - "'infra' not in (policies_read.results[0].data.data.policy)"
+          - "'infra' not in (policies_read.results[1].data.data.policy)"
+          - "'infra' not in (policies_read.results[2].data.data.policy)"
+        fail_msg: "infra/* accessible depuis une policy service — violation de perimetre."
+        success_msg: "infra/* absent de toutes les policies service (acces admin uniquement)."
 
     # ---- 4) REFUS (mirror du cloisonnement postgres) ------------------------
     # Token limite a identity-policy : lecture identity/db DOIT reussir,
@@ -207,6 +234,8 @@
           - "'-dev' in (fragment_b64.content | b64decode)"
           - "'data-net' in (fragment_b64.content | b64decode)"
           - "'mem_limit' in (fragment_b64.content | b64decode)"
+          # VAULT_ADDR present -> healthcheck `vault status` en HTTP.
+          - "'VAULT_ADDR' in (fragment_b64.content | b64decode)"
           # AUCUN port publie vers l'hote : pas de cle `ports:`.
           - "'ports:' not in (fragment_b64.content | b64decode)"
         fail_msg: "Le fragment compose ne reflete pas l'infra attendue."

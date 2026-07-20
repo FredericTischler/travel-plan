@@ -55,3 +55,19 @@ postgres_app_users:
 # AUCUNE par defaut : citext/uuid-ossp relevent du schema Flyway, pas de l'infra.
 # Ne pas ajouter d'extension "au cas ou".
 postgres_extensions: []
+
+# --- Integration Vault (lecture des secrets au rendu / provisioning) --------
+# postgres_vault_read: false (defaut) => Molecule-safe, aucune lecture Vault.
+# postgres_vault_read: true  => lecture depuis Vault (run reel, passer via -e).
+postgres_vault_read: false
+
+# Chemin du .env Docker Compose genere par Ansible avec le secret superuser.
+# Doit etre dans le meme repertoire que docker-compose.yml (auto-charge par Compose).
+# Ne commiter JAMAIS ce fichier (.gitignore).
+postgres_runtime_env_path: "/opt/travel-plan/.env"
+
+# Variables Vault pour le run reel (ignorees quand postgres_vault_read: false).
+# A surcharger via -e en prod. Coherentes avec vault/defaults/main.yml.
+vault_addr: "http://localhost:8200"
+vault_kv_mount: "secret"
+vault_dev_root_token: "changeme_vault_root_token"  # noqa: surcharger via ansible-vault

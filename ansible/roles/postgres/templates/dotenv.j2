@@ -1,0 +1,5 @@
+# Genere par Ansible (roles/postgres) — NE PAS COMMITER.
+# Contient le secret superuser PostgreSQL lu depuis Vault.
+# Charge automatiquement par Docker Compose au moment du `up`.
+# {{ ansible_managed }}
+POSTGRES_SUPERUSER_PASSWORD={{ postgres_superuser_password }}

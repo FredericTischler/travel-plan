@@ -26,6 +26,9 @@ services:
       # JAMAIS de valeur en clair ici : reference une variable d'environnement.
       VAULT_DEV_ROOT_TOKEN_ID: "${VAULT_DEV_ROOT_TOKEN_ID:?set via env/ansible-vault}"
       VAULT_DEV_LISTEN_ADDRESS: "{{ vault_dev_listen_address }}"
+      # VAULT_ADDR requis pour que `vault status` (healthcheck) trouve le serveur
+      # en HTTP (sans cela, le client vault tente https://127.0.0.1:8200 -> echec).
+      VAULT_ADDR: "http://127.0.0.1:8200"
     # Dev mode desactive mlock -> IPC_LOCK inutile pour demarrer.
     networks:
       - {{ vault_network }}
