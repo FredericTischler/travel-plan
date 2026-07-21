@@ -71,3 +71,10 @@ postgres_runtime_env_path: "/opt/travel-plan/.env"
 vault_addr: "http://localhost:8200"
 vault_kv_mount: "secret"
 vault_dev_root_token: "changeme_vault_root_token"  # noqa: surcharger via ansible-vault
+
+# Proprietaire du .env genere (lu par Docker Compose, qui tourne en tant qu'utilisateur
+# normal — pas root). Utilise lookup('env', ...) pour ne PAS dependre de gather_facts :
+# ansible_env et ansible_user_id sont des facts indisponibles si gather_facts: false.
+# SUDO_USER (vide si pas de sudo) -> USER (toujours present en shell Linux/macOS).
+# Le second argument `true` de default() traite la chaine vide comme "non defini".
+postgres_env_owner: "{{ lookup('env', 'SUDO_USER') | default(lookup('env', 'USER'), true) }}"

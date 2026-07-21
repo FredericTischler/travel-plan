@@ -13,7 +13,7 @@
 # externes à Compose). Leur cycle de vie appartient exclusivement à Ansible.
 # C'est voulu — la donnée réseau survit aux cycles up/down de la stack.
 
-- name: "Ensure Docker network {{ item.name }} exists"
+- name: "Ensure Docker networks exist"
   community.docker.docker_network:
     name: "{{ item.name }}"
     driver: "{{ item.driver }}"
