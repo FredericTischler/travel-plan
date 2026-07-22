@@ -74,6 +74,16 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
+        <!-- Spring Security — added ONLY to get BCryptPasswordEncoder as an
+             injectable bean (see config.SecurityConfig). Its autoconfiguration
+             (default filter chain protecting every route) is explicitly
+             excluded in IdentityServiceApplication; no SecurityFilterChain
+             is defined anywhere in this codebase. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
         <!-- ===== TEST scope ===== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

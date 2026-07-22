@@ -58,7 +58,7 @@ class UserLifecycleIntegrationTest {
         String email = "test@example.com";
 
         // Step 1 — POST /users → 201 Created
-        Map<String, String> body = Map.of("email", email);
+        Map<String, String> body = Map.of("email", email, "password", "test_password_1");
         ResponseEntity<Map> createResponse = restTemplate.postForEntity("/users", body, Map.class);
 
         assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);

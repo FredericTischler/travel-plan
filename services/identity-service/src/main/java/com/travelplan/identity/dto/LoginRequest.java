@@ -2,28 +2,24 @@ package com.travelplan.identity.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 
 /**
- * Request body for {@code POST /users}.
+ * Request body for {@code POST /login}.
  *
  * Validated by {@code @Valid} in the controller. Constraint violations are
  * handled by {@link com.travelplan.identity.exception.GlobalExceptionHandler}
- * and returned as HTTP 400. The plaintext password never leaves this DTO —
- * it is hashed by {@link com.travelplan.identity.service.UserService} before
- * persistence and is never included in any response.
+ * and returned as HTTP 400.
  */
-public class CreateUserRequest {
+public class LoginRequest {
 
     @NotBlank(message = "must not be blank")
     @Email(message = "must be a valid email address")
     private String email;
 
     @NotBlank(message = "must not be blank")
-    @Size(min = 8, message = "must be at least 8 characters long")
     private String password;
 
-    public CreateUserRequest() {
+    public LoginRequest() {
         // required for Jackson deserialization
     }
 

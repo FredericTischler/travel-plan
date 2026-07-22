@@ -39,12 +39,16 @@ public class User {
     @Column(name = "deleted_at", columnDefinition = "TIMESTAMPTZ")
     private OffsetDateTime deletedAt;
 
+    @Column(name = "password_hash", nullable = false)
+    private String passwordHash;
+
     protected User() {
         // required by JPA
     }
 
-    public User(String email) {
+    public User(String email, String passwordHash) {
         this.email = email;
+        this.passwordHash = passwordHash;
         this.createdAt = OffsetDateTime.now();
     }
 
@@ -66,5 +70,9 @@ public class User {
 
     public void setDeletedAt(OffsetDateTime deletedAt) {
         this.deletedAt = deletedAt;
+    }
+
+    public String getPasswordHash() {
+        return passwordHash;
     }
 }

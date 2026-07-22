@@ -6,6 +6,7 @@ import com.travelplan.identity.entity.User;
 import com.travelplan.identity.exception.EmailAlreadyActiveException;
 import com.travelplan.identity.exception.UserNotFoundException;
 import com.travelplan.identity.repository.UserRepository;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,13 +31,16 @@ import java.util.stream.Collectors;
 public class UserService {
 
     private final UserRepository userRepository;
+    private final BCryptPasswordEncoder passwordEncoder;
 
-    public UserService(UserRepository userRepository) {
+    public UserService(UserRepository userRepository, BCryptPasswordEncoder passwordEncoder) {
         this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     /**
-     * Create a new active user.
+     * Create a new active user. The password is hashed with BCrypt before
+     * persistence; the plaintext value never reaches the repository.
      *
      * @throws EmailAlreadyActiveException if an active user already owns {@code email}
      */
@@ -47,7 +51,8 @@ public class UserService {
                     throw new EmailAlreadyActiveException(request.getEmail());
                 });
 
-        User user = new User(request.getEmail());
+        String passwordHash = passwordEncoder.encode(request.getPassword());
+        User user = new User(request.getEmail(), passwordHash);
         User saved = userRepository.save(user);
         return UserResponse.from(saved);
     }
