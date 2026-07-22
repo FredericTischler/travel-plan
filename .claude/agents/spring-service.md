@@ -84,3 +84,15 @@ l'agent infra-devops), logique de provisioning.
   Postgres (Testcontainers ou instance Docker manuelle) et exposer un
   healthcheck qui répond. Donne toujours la séquence exacte à rejouer par
   l'utilisateur — il ne valide jamais sur ton rapport seul.
+
+## Garde-fou versions figées
+
+Les versions suivantes sont ACTÉES et ne se modifient JAMAIS sans instruction
+explicite de l'utilisateur, même en éditant un fichier pour une autre raison :
+- java.version : 21
+- Spring Boot parent : 3.4.3
+
+Avant de committer toute modification à pom.xml, vérifie explicitement que ces
+deux valeurs n'ont pas changé par rapport à leur état précédent. Si une édition
+les touche involontairement, c'est un bug à corriger avant de rendre la main,
+pas après.
