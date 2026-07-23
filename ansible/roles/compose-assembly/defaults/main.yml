@@ -38,6 +38,21 @@ assembly_traefik_fragment:  "traefik/compose.traefik.yml"
 assembly_identity_enabled: true
 assembly_identity_fragment: ""
 
+# --- Fragment payment-service (statique, dans le dépôt — pas un rôle Ansible) ---
+# Même particularité qu'identity : payment-service BUILD depuis les sources, son
+# fragment reste co-localisé avec Dockerfile + src/ et est référencé par CHEMIN
+# ABSOLU vers le checkout du dépôt (variable d'une machine à l'autre).
+#
+# DÉFAUT = false (CONTRAIREMENT à identity) : le raccordement payment-service <->
+# Traefik n'est PAS encore prouvé bout-en-bout. Tant que cette dette d'intégration
+# n'est pas fermée, le rendu par défaut reste STRICTEMENT inchangé — l'include et
+# le bloc de service payment ne sont émis QUE si ce flag est explicitement activé.
+# À activer + localiser selon la machine :
+#   -e assembly_payment_enabled=true
+#   -e assembly_payment_fragment=/chemin/absolu/vers/le/depot/services/payment-service/docker-compose.payment.yml
+assembly_payment_enabled: false
+assembly_payment_fragment: ""
+
 # Réseaux Docker à créer (Ansible en est propriétaire, driver bridge).
 assembly_networks:
   - name: "edge-net"

@@ -27,6 +27,13 @@ include:
   # sous {{ assembly_compose_dir }}. Activé via assembly_identity_enabled=true.
   - path: {{ assembly_identity_fragment }}
 {% endif %}
+{% if assembly_payment_enabled %}
+  # payment-service : fragment STATIQUE du dépôt (build depuis les sources),
+  # référencé par CHEMIN ABSOLU (co-localisé avec Dockerfile + src/), pas rendu
+  # sous {{ assembly_compose_dir }}. DÉFAUT désactivé (intégration pas encore
+  # prouvée bout-en-bout) — activé via assembly_payment_enabled=true.
+  - path: {{ assembly_payment_fragment }}
+{% endif %}
 
 services:
   # Profils appliqués par merge sur les services inclus (Compose spec : les attributs
@@ -57,5 +64,14 @@ services:
   # service devient utilisé au quotidien. Profils appliqués par merge sur le
   # service inclus (même mécanisme que postgres/vault/neo4j ci-dessus).
   identity-service:
+    profiles: [full]
+{% endif %}
+{% if assembly_payment_enabled %}
+
+  # payment-service : profil [full] uniquement (pas core), même raisonnement
+  # qu'identity-service. Bloc émis uniquement si assembly_payment_enabled=true.
+  # Profils appliqués par merge sur le service inclus (même mécanisme que
+  # postgres/vault/neo4j ci-dessus).
+  payment-service:
     profiles: [full]
 {% endif %}
