@@ -12,6 +12,31 @@ assembly_compose_dir: "/opt/travel-plan"
 assembly_postgres_fragment: "postgres/compose.postgres.yml"
 assembly_vault_fragment:    "vault/compose.vault.yml"
 assembly_neo4j_fragment:    "neo4j/compose.neo4j.yml"
+# Traefik = la GATEWAY (rôle Ansible stable). Chemin cohérent avec les defaults du
+# rôle traefik : traefik_compose_dir=/opt/travel-plan/traefik et le fragment rendu
+# par sa tâche "Render Traefik compose service fragment" = compose.traefik.yml.
+# Relatif à assembly_compose_dir (/opt/travel-plan) => "traefik/compose.traefik.yml".
+assembly_traefik_fragment:  "traefik/compose.traefik.yml"
+
+# --- Fragment identity-service (statique, dans le dépôt — pas un rôle Ansible) ---
+# Particularité : identity-service BUILD depuis les sources, son fragment doit
+# rester co-localisé avec Dockerfile + src/. Il n'est donc PAS rendu sous
+# assembly_compose_dir mais référencé par CHEMIN ABSOLU vers le checkout du dépôt.
+#
+# Les includes Compose sont traités quel que soit le --profile : un chemin
+# invalide casserait AUSSI le rendu core. On garde donc l'include derrière un
+# flag explicite.
+#
+# DÉFAUT = true : le raccordement identity-service <-> Traefik est désormais prouvé
+# bout-en-bout (dette d'intégration fermée). Ce flag n'a donc plus à être activé
+# manuellement. Il RESTE un flag (et non un include en dur) pour une seule raison :
+# assembly_identity_fragment doit rester surchargeable — c'est un CHEMIN ABSOLU vers
+# le checkout du dépôt, qui varie d'une machine à l'autre. L'intégration n'est PAS
+# optionnelle ; seule la localisation du fragment l'est.
+# À surcharger selon la machine :
+#   -e assembly_identity_fragment=/chemin/absolu/vers/le/depot/services/identity-service/docker-compose.identity.yml
+assembly_identity_enabled: true
+assembly_identity_fragment: ""
 
 # Réseaux Docker à créer (Ansible en est propriétaire, driver bridge).
 assembly_networks:

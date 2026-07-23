@@ -17,6 +17,16 @@ include:
   - path: {{ assembly_postgres_fragment }}
   - path: {{ assembly_vault_fragment }}
   - path: {{ assembly_neo4j_fragment }}
+  # traefik : la GATEWAY, rôle Ansible stable (fragment rendu sous
+  # {{ assembly_compose_dir }}/traefik/). Inclus SANS flag conditionnel — contrairement
+  # à identity, ce n'est pas un fragment statique optionnel du dépôt à chemin variable.
+  - path: {{ assembly_traefik_fragment }}
+{% if assembly_identity_enabled %}
+  # identity-service : fragment STATIQUE du dépôt (build depuis les sources),
+  # référencé par CHEMIN ABSOLU (co-localisé avec Dockerfile + src/), pas rendu
+  # sous {{ assembly_compose_dir }}. Activé via assembly_identity_enabled=true.
+  - path: {{ assembly_identity_fragment }}
+{% endif %}
 
 services:
   # Profils appliqués par merge sur les services inclus (Compose spec : les attributs
@@ -31,3 +41,21 @@ services:
   # Exclu du profil core pour libérer ~1 Go en dev quotidien.
   neo4j:
     profiles: [full]
+
+  # traefik : profil [core, full] — présent MÊME en core.
+  # Justification : Traefik est le SEUL point d'entrée du système (le seul port
+  # publié, 443). Sans lui, aucun service routé n'est joignable, même en dev
+  # quotidien. Il doit donc rester dans "core" ; l'exclure rendrait la stack core
+  # inaccessible de l'extérieur. Profils appliqués par merge sur le service inclus
+  # (même mécanisme que postgres/vault ci-dessus).
+  traefik:
+    profiles: [core, full]
+{% if assembly_identity_enabled %}
+
+  # identity-service : profil [full] uniquement pour l'instant (pas core).
+  # Pas encore de raison de le charger dans le dev quotidien ; à revalider si le
+  # service devient utilisé au quotidien. Profils appliqués par merge sur le
+  # service inclus (même mécanisme que postgres/vault/neo4j ci-dessus).
+  identity-service:
+    profiles: [full]
+{% endif %}
