@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: payment-service
+
+  datasource:
+    # Variables injected by Docker Compose from Vault (secret/payment/db).
+    # Keys: username, password, dbname, host, port — exact match with Vault path.
+    # Fail-fast on startup if any variable is absent (Spring Boot enforces :?).
+    url: jdbc:postgresql://${DB_HOST:?DB_HOST is required}:${DB_PORT:?DB_PORT is required}/${DB_NAME:?DB_NAME is required}
+    username: ${DB_USERNAME:?DB_USERNAME is required}
+    password: ${DB_PASSWORD:?DB_PASSWORD is required}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      connection-timeout: 10000
+      maximum-pool-size: 5
+
+  jpa:
+    # Flyway owns schema — ddl-auto must never be create or update.
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always
