@@ -10,6 +10,15 @@ FROM eclipse-temurin:21.0.7_6-jdk-noble AS build
 
 WORKDIR /workspace
 
+# `unzip` is REQUIRED by this project's mvnw: it is a hand-rolled shell wrapper
+# (no maven-wrapper.jar shipped) that downloads the Maven distribution zip and
+# extracts it with `unzip` — a tool absent from eclipse-temurin:*-jdk-noble.
+# Without this the build fails at `./mvnw` with "unzip: not found". Pinned apt
+# layer, lists cleaned to keep the build stage lean (discarded at runtime anyway).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends unzip \
+ && rm -rf /var/lib/apt/lists/*
+
 # Copy Maven wrapper and POM first (layer cache: dependency download only
 # re-runs when pom.xml changes, not on every source change).
 COPY .mvn/ .mvn/

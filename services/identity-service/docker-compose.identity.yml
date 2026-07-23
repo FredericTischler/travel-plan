@@ -1,0 +1,104 @@
+# Fragment de service Compose pour identity-service.
+#
+# CONTRAIREMENT aux fragments postgres/vault/neo4j (rendus par un role Ansible
+# sous /opt/travel-plan), CELUI-CI est STATIQUE et vit dans le depot, co-localise
+# avec le Dockerfile + src/ : identity-service BUILD depuis les sources, son
+# contexte de build doit donc rester a cote. Le docker-compose.yml top-level
+# l'inclut par CHEMIN ABSOLU (voir role compose-assembly).
+#
+# CABLAGE RESEAU (coherent avec le reste du projet, docs §4) :
+#   - data-net    : pour joindre PostgreSQL (nom de service `postgres`).
+#   - backend-net : pour etre DECOUVERT et route par Traefik (labels ci-dessous).
+#   AUCUN port publie vers l'hote : seul Traefik expose (443, terminaison TLS).
+#
+# TERMINAISON TLS AU BORD : Traefik termine le TLS ; ce backend reste en HTTP
+# simple sur backend-net (reseau Docker de confiance), coherent avec les autres.
+services:
+  identity-service:
+    build:
+      # Contexte = repertoire de CE fragment (le depot services/identity-service/),
+      # ou se trouvent Dockerfile + mvnw + pom.xml + src/. Resolu par Compose
+      # relativement au fichier inclus, PAS au docker-compose.yml top-level.
+      context: .
+      dockerfile: Dockerfile
+    image: "travel-plan/identity-service:0.1.0"
+    container_name: "travel-plan-identity"
+    restart: unless-stopped
+    # Garde-fou RAM 8 Go (docs §4). Spring Boot + Hikari(5) + JVM : 512m confortable
+    # (l'ENTRYPOINT fixe MaxRAMPercentage=75 => ~384m de heap max).
+    mem_limit: "512m"
+    environment:
+      # --- Connexion PostgreSQL -------------------------------------------
+      # DB_HOST = NOM DU SERVICE Docker `postgres` (resolution DNS interne du
+      # reseau data-net), JAMAIS localhost : localhost designerait le conteneur
+      # identity lui-meme. Le service postgres n'expose aucun port a l'hote.
+      DB_HOST: "postgres"
+      DB_PORT: "5432"
+      # Base + compte a droits limites provisionnes par le role Ansible postgres
+      # (postgres_databases / postgres_app_users : identity_db / identity_user).
+      DB_NAME: "identity_db"
+      DB_USERNAME: "identity_user"
+      # --- DETTE TECHNIQUE ASSUMEE : mot de passe DB -----------------------
+      # Le .env genere par le role postgres ne porte QUE POSTGRES_SUPERUSER_PASSWORD
+      # (secret superuser de provisioning), PAS le mot de passe du compte applicatif
+      # identity_user. Le mecanisme .env n'est donc PAS reutilisable tel quel ici.
+      # On interpole IDENTITY_DB_PASSWORD (a alimenter via .env/Vault en prod, comme
+      # le fait le role postgres pour son superuser) avec, en FALLBACK dev, le meme
+      # placeholder "changeme_*" que le role postgres embarque dans ses defaults
+      # (postgres_app_users[identity_user].password = changeme_identity_user).
+      # => runnable out-of-the-box pour la preuve ; a surcharger via Vault en prod.
+      DB_PASSWORD: "${IDENTITY_DB_PASSWORD:-changeme_identity_user}"
+      # --- DETTE TECHNIQUE ASSUMEE : cle de signature JWT ------------------
+      # Valeur de TEST en dur (>= 32 octets, exige par jjwt/HS256, RFC 7518 §3.2).
+      # PAS de cablage Vault a ce stade : decision actee (projet a echelle reduite,
+      # UN SEUL service emet ET verifie le JWT, aucun besoin de rotation ni de
+      # partage de cle inter-services). A rebrancher sur Vault si un 2e service
+      # doit un jour verifier ces jetons.
+      JWT_SIGNING_KEY: "dev-insecure-jwt-signing-key-change-me-0123456789ABCDEF"
+    networks:
+      - data-net
+      - backend-net
+    depends_on:
+      postgres:
+        # Attend que PostgreSQL soit HEALTHY (pg_isready) avant de demarrer :
+        # sinon Flyway/Hikari echouent au boot (fail-fast) sur une DB pas prete.
+        condition: service_healthy
+    # Healthcheck applicatif : /actuator/health (expose par application.yml).
+    # curl est present dans l'image runtime (eclipse-temurin:*-jre-noble).
+    # Actuator ne repond UP qu'une fois la DB joignable => `--wait` attend le
+    # service REELLEMENT pret (pas juste le conteneur "running").
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    # --- Routage Traefik par LABELS (idiome provider docker Traefik 3.x) -----
+    # providers.docker est DEJA active cote role traefik (traefik.static.yml.j2,
+    # exposedByDefault=false, network=backend-net) : le routage se declare donc
+    # ICI, par labels sur le service, PAS dans une config statique centralisee.
+    labels:
+      # Requis : exposedByDefault=false => rien n'est route sans opt-in explicite.
+      - "traefik.enable=true"
+      # Conteneur multi-homed (data-net + backend-net) : on FORCE le reseau que
+      # Traefik utilise pour joindre le service (belt-and-suspenders vs la valeur
+      # globale providers.docker.network=backend-net).
+      - "traefik.docker.network=backend-net"
+      # Router : Host simple. `identity.localhost` -> testable via l'en-tete Host
+      # sans dependance DNS (voir preuve curl). Le cert auto-signe par defaut de
+      # Traefik (tls.stores.default) couvre tout SNI, -k suffit cote client.
+      - "traefik.http.routers.identity.rule=Host(`identity.localhost`)"
+      # Entrypoint HTTPS `websecure` (:443) = seul point d'entree public du projet.
+      - "traefik.http.routers.identity.entrypoints=websecure"
+      # TLS termine au bord par Traefik ; backend en HTTP simple derriere.
+      - "traefik.http.routers.identity.tls=true"
+      # Port INTERNE du conteneur (EXPOSE 8080). Traefik y route via backend-net.
+      - "traefik.http.services.identity.loadbalancer.server.port=8080"
+
+networks:
+  # Reseaux cloisonnes crees et possedes par Ansible (role compose-assembly,
+  # community.docker.docker_network) ; declares externes ici (Compose ne les gere pas).
+  data-net:
+    external: true
+  backend-net:
+    external: true
