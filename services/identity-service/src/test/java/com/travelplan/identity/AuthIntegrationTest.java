@@ -22,8 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * The property under test that matters most for this endpoint: an unknown
  * email and a wrong password for a known email must be indistinguishable to
- * the caller (same HTTP status, same body). No JWT/session/token is ever
- * involved — a successful login only returns {id, email}.
+ * the caller (same HTTP status, same body). A successful login returns
+ * {id, email, token} — JWT issuance/validation is covered separately by
+ * {@link JwtIntegrationTest}.
  *
  * Uses Testcontainers (postgres:17.5-bookworm, same image as production).
  */
@@ -45,6 +46,9 @@ class AuthIntegrationTest {
         registry.add("DB_NAME", postgres::getDatabaseName);
         registry.add("DB_USERNAME", postgres::getUsername);
         registry.add("DB_PASSWORD", postgres::getPassword);
+        // Test-only secret, >= 32 bytes (256 bits) as required by HS256 (jjwt
+        // throws WeakKeyException otherwise). Never used outside this test JVM.
+        registry.add("JWT_SIGNING_KEY", () -> "test-only-signing-key-must-be-at-least-32-bytes-long");
     }
 
     @Autowired
@@ -63,6 +67,8 @@ class AuthIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).containsKey("id");
         assertThat(response.getBody()).containsEntry("email", email);
+        assertThat(response.getBody()).containsKey("token");
+        assertThat((String) response.getBody().get("token")).isNotBlank();
         assertThat(response.getBody()).doesNotContainKeys("password", "password_hash", "passwordHash");
     }
 

@@ -2,27 +2,39 @@ package com.travelplan.identity.service;
 
 import com.travelplan.identity.dto.LoginRequest;
 import com.travelplan.identity.dto.LoginResponse;
+import com.travelplan.identity.dto.UserResponse;
 import com.travelplan.identity.entity.User;
 import com.travelplan.identity.exception.InvalidCredentialsException;
+import com.travelplan.identity.exception.InvalidTokenException;
 import com.travelplan.identity.repository.UserRepository;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.UUID;
+
 /**
- * Authentication logic for {@code POST /login}.
+ * Authentication logic for {@code POST /login} and {@code GET /me}.
  *
- * No JWT, no session, no token: a successful call only confirms that the
- * given credentials match an active (non-deleted) user. Unknown email and
- * wrong password are deliberately indistinguishable to the caller — same
- * HTTP status, same message.
+ * A successful login confirms that the given credentials match an active
+ * (non-deleted) user and issues a short-lived JWT (see {@link JwtService}).
+ * Unknown email and wrong password are deliberately indistinguishable to the
+ * caller — same HTTP status, same message. {@code GET /me} applies the same
+ * non-disclosure philosophy to token validation: every failure reason
+ * (missing header, malformed token, expired, bad signature, user no longer
+ * active) collapses to the same generic {@link InvalidTokenException}.
  */
 @Service
 @Transactional(readOnly = true)
 public class AuthService {
 
+    private static final String BEARER_PREFIX = "Bearer ";
+
     private final UserRepository userRepository;
     private final BCryptPasswordEncoder passwordEncoder;
+    private final JwtService jwtService;
 
     // Fixed dummy password, hashed once at construction time (i.e. once per
     // application startup, not per request). Used to run a BCrypt comparison
@@ -31,9 +43,11 @@ public class AuthService {
     // enumeration via response-time measurement.
     private final String dummyHash;
 
-    public AuthService(UserRepository userRepository, BCryptPasswordEncoder passwordEncoder) {
+    public AuthService(UserRepository userRepository, BCryptPasswordEncoder passwordEncoder,
+                        JwtService jwtService) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.jwtService = jwtService;
         this.dummyHash = passwordEncoder.encode("dummy-password-for-timing-safety");
     }
 
@@ -52,6 +66,35 @@ public class AuthService {
             throw new InvalidCredentialsException();
         }
 
-        return new LoginResponse(user.getId(), user.getEmail());
+        String token = jwtService.generateToken(user);
+        return new LoginResponse(user.getId(), user.getEmail(), token);
+    }
+
+    /**
+     * Resolve the active user identified by the Bearer token in the
+     * {@code Authorization} header.
+     *
+     * @param authorizationHeader raw header value, may be {@code null}
+     * @throws InvalidTokenException if the header is absent, not a
+     *         {@code Bearer} value, the token fails signature/expiration
+     *         validation, or its subject no longer maps to an active user
+     */
+    public UserResponse getCurrentUser(String authorizationHeader) {
+        if (authorizationHeader == null || !authorizationHeader.startsWith(BEARER_PREFIX)) {
+            throw new InvalidTokenException();
+        }
+        String token = authorizationHeader.substring(BEARER_PREFIX.length());
+
+        UUID userId;
+        try {
+            Claims claims = jwtService.validate(token);
+            userId = UUID.fromString(claims.getSubject());
+        } catch (JwtException | IllegalArgumentException ex) {
+            throw new InvalidTokenException();
+        }
+
+        User user = userRepository.findActiveById(userId)
+                .orElseThrow(InvalidTokenException::new);
+        return UserResponse.from(user);
     }
 }

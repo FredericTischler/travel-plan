@@ -5,17 +5,20 @@ import java.util.UUID;
 /**
  * API response for a successful {@code POST /login}.
  *
- * Intentionally minimal: no JWT, no session token, no role — just enough to
- * confirm which identity was authenticated. Never includes the password hash.
+ * Includes a short-lived (15 min) JWT usable as a Bearer token against
+ * {@code GET /me}. No refresh token, no session. Never includes the
+ * password hash.
  */
 public class LoginResponse {
 
     private final UUID id;
     private final String email;
+    private final String token;
 
-    public LoginResponse(UUID id, String email) {
+    public LoginResponse(UUID id, String email, String token) {
         this.id = id;
         this.email = email;
+        this.token = token;
     }
 
     public UUID getId() {
@@ -24,5 +27,9 @@ public class LoginResponse {
 
     public String getEmail() {
         return email;
+    }
+
+    public String getToken() {
+        return token;
     }
 }

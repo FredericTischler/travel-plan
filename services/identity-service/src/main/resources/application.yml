@@ -25,6 +25,13 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+jwt:
+  # HS256 signing secret. Env var ONLY — no default, no Vault client in this
+  # service (see JwtService javadoc). Fails startup if absent, same :?
+  # pattern as the DB_* variables above. Must be >= 32 bytes (256 bits):
+  # jjwt itself rejects a shorter key with WeakKeyException (RFC 7518 §3.2).
+  signing-key: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
+
 server:
   port: 8080
 

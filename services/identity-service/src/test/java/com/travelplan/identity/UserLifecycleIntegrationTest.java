@@ -48,6 +48,7 @@ class UserLifecycleIntegrationTest {
         registry.add("DB_NAME", postgres::getDatabaseName);
         registry.add("DB_USERNAME", postgres::getUsername);
         registry.add("DB_PASSWORD", postgres::getPassword);
+        registry.add("JWT_SIGNING_KEY", () -> "test-only-signing-key-must-be-at-least-32-bytes-long");
     }
 
     @Autowired

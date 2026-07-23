@@ -84,6 +84,31 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- JWT (jjwt 0.13.0 — latest stable, verified via Maven Central metadata).
+             api = compile-time interfaces; impl + jackson = runtime implementation.
+             jjwt-jackson reuses the Jackson already on the classpath via
+             spring-boot-starter-web (no extra JSON library). Used only by
+             JwtService for manual token generation/validation — no Spring
+             Security filter chain involved (see JwtService javadoc for the
+             HS256 vs RS256 rationale). -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.13.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.13.0</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>0.13.0</version>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- ===== TEST scope ===== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
