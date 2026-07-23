@@ -19,15 +19,24 @@ import java.util.stream.Collectors;
  * </pre>
  *
  * No business logic lives here — only HTTP status assignment and body shaping.
- *
- * This is a generic skeleton: at this increment there is no controller and no
- * payment-specific exception yet, so only the framework-level validation
- * exception is handled. Business exceptions (e.g. payment not found) are
- * expected to be added here as they are introduced, following the same
- * pattern as identity-service's handler.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(PaymentNotFoundException.class)
+    public ResponseEntity<Map<String, Object>> handlePaymentNotFound(PaymentNotFoundException ex) {
+        return buildResponse(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(InvalidStatusValueException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidStatusValue(InvalidStatusValueException ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    @ExceptionHandler(PaymentAlreadyTerminalException.class)
+    public ResponseEntity<Map<String, Object>> handlePaymentAlreadyTerminal(PaymentAlreadyTerminalException ex) {
+        return buildResponse(HttpStatus.CONFLICT, ex.getMessage());
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
