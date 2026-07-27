@@ -47,11 +47,25 @@ services:
       # Postgres. travel-service se connecte avec CES credentials admin.
       NEO4J_USERNAME: "neo4j"
       # Meme variable NEO4J_PASSWORD que celle consommee par le fragment
-      # Compose rendu par le role Ansible neo4j (NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}) :
+      # Compose rendu par le role Ansible neo4j (NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?...}) :
       # un seul compte Neo4j => un seul secret partage, pas un secret par
-      # service comme cote Postgres. Fallback dev "changeme_neo4j" = meme
-      # placeholder que vault_secrets["travel/db"].password (ansible/roles/vault/defaults/main.yml).
-      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-changeme_neo4j}"
+      # service comme cote Postgres.
+      #
+      # FAIL-FAST DELIBERE (PAS de fallback dev, CONTRAIREMENT a payment) : on
+      # s'aligne exactement sur le fragment du role neo4j, qui utilise `:?` sans
+      # fallback. Raison : un fallback "${NEO4J_PASSWORD:-changeme_neo4j}" ici
+      # fournirait TOUJOURS une valeur non-vide au conteneur travel-service, ce qui
+      #   1) neutralise le fail-fast que l'application.yml impose deja
+      #      (password: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}), et
+      #   2) cree un mismatch SILENCIEUX : si le volume Neo4j a ete initialise avec
+      #      un autre secret (NEO4J_AUTH n'est applique qu'au 1er demarrage), travel
+      #      se connecterait avec "changeme_neo4j" => echec d'auth au runtime, pas
+      #      au parsing Compose.
+      # Avec `:?`, si NEO4J_PASSWORD est absent, les DEUX fragments (neo4j + travel)
+      # echouent identiquement au parsing d'UNE SEULE invocation `docker compose`
+      # (env partage) : impossible de diverger silencieusement. Le secret est injecte
+      # via .env/Vault, jamais en clair ici.
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:?set via env/Vault}"
     networks:
       - data-net
       - backend-net

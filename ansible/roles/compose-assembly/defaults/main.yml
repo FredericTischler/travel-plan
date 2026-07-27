@@ -53,6 +53,21 @@ assembly_identity_fragment: ""
 assembly_payment_enabled: false
 assembly_payment_fragment: ""
 
+# --- Fragment travel-service (statique, dans le dépôt — pas un rôle Ansible) ---
+# Même particularité qu'identity/payment : travel-service BUILD depuis les sources,
+# son fragment reste co-localisé avec Dockerfile + src/ et est référencé par CHEMIN
+# ABSOLU vers le checkout du dépôt (variable d'une machine à l'autre).
+#
+# DÉFAUT = false (comme payment) : le raccordement travel-service <-> Traefik n'est
+# PAS considéré comme prouvé bout-en-bout par défaut. Tant que l'opérateur ne l'a pas
+# rejoué sur SA machine, le rendu par défaut reste STRICTEMENT inchangé — l'include et
+# le bloc de service travel ne sont émis QUE si ce flag est explicitement activé.
+# À activer + localiser selon la machine :
+#   -e assembly_travel_enabled=true
+#   -e assembly_travel_fragment=/chemin/absolu/vers/le/depot/services/travel-service/docker-compose.travel.yml
+assembly_travel_enabled: false
+assembly_travel_fragment: ""
+
 # Réseaux Docker à créer (Ansible en est propriétaire, driver bridge).
 assembly_networks:
   - name: "edge-net"
