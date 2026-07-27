@@ -33,7 +33,7 @@ jwt:
   signing-key: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
 
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
 management:
   endpoints:

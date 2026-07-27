@@ -15,7 +15,7 @@ spring:
       password: ${NEO4J_PASSWORD:?NEO4J_PASSWORD is required}
 
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
 management:
   endpoints:
