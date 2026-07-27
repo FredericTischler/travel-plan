@@ -1,0 +1,30 @@
+<h1>Utilisateurs</h1>
+
+@if (loading()) {
+  <p>Chargement…</p>
+} @else if (error()) {
+  <p role="alert">{{ error() }}</p>
+} @else {
+  <table>
+    <thead>
+      <tr>
+        <th>Id</th>
+        <th>Email</th>
+        <th>Créé le</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (user of users(); track user.id) {
+        <tr>
+          <td>{{ user.id }}</td>
+          <td>{{ user.email }}</td>
+          <td>{{ user.createdAt }}</td>
+        </tr>
+      } @empty {
+        <tr>
+          <td colspan="3">Aucun utilisateur.</td>
+        </tr>
+      }
+    </tbody>
+  </table>
+}
