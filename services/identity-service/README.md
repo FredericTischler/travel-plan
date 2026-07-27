@@ -7,26 +7,44 @@
 Basic CRUD skeleton for the `User` resource, plus password-based
 authentication:
 
-- `POST /users` — create a user (email + password). Rejects with 409 if the
-  email is already active. The plaintext password is hashed with BCrypt
-  before persistence; it never reaches the repository.
+- `POST /users` — create a user (email + password). Public — it is the only
+  way to create the very first account. Rejects with 409 if the email is
+  already active. The plaintext password is hashed with BCrypt before
+  persistence; it never reaches the repository.
 - `GET /users/{id}` — get an active user by id (404 if absent or
-  soft-deleted).
-- `GET /users` — list all active users.
+  soft-deleted). Requires a valid `Authorization: Bearer <token>` header.
+- `GET /users` — list all active users. Requires a valid
+  `Authorization: Bearer <token>` header.
 - `DELETE /users/{id}` — soft-delete an active user (404 if absent or already
-  soft-deleted).
-- `POST /login` — verify email + password for an active user. Returns 200
-  with the user's id, email, and a signed JWT on success; 401 with a generic
-  message on any failure (unknown email and wrong password are
-  indistinguishable to the caller, including in response timing).
+  soft-deleted). Requires a valid `Authorization: Bearer <token>` header.
+- `POST /login` — verify email + password for an active user. Public —
+  no token can exist before a successful login. Returns 200 with the user's
+  id, email, and a signed JWT on success; 401 with a generic message on any
+  failure (unknown email and wrong password are indistinguishable to the
+  caller, including in response timing).
 - `GET /me` — resolve the active user identified by the
   `Authorization: Bearer <token>` header. Returns 401 (same generic message)
   if the header is absent/malformed, the token is expired/invalid, or its
   subject no longer maps to an active user.
 
 There is no Spring Security filter chain in this codebase. Token validation
-on `GET /me` is manual (read the header, verify via the JWT service). Every
-other route, including `/login`, remains unprotected by any global filter.
+is manual: `GET /me`, `GET /users`, `GET /users/{id}` and `DELETE /users/{id}`
+all reuse the exact same mechanism (read the header in the controller,
+validate via `AuthService`/`JwtService`) and return the exact same generic
+401 body on failure. "Protected" means "any authenticated user" — there is
+no role/permission distinction (no `role` claim in the JWT), so this is not
+ownership-aware: any valid token unlocks these routes regardless of whose
+account it belongs to. `POST /users` and `POST /login` remain public.
+
+## CORS
+
+Browser origins for the admin dashboard are allowed via a plain Spring MVC
+`WebMvcConfigurer` (`CorsConfig`), not a Spring Security `CorsConfigurationSource`
+— there is no security filter chain to hang one off. Allowed by default:
+`http://localhost:4200` (Angular dev server) and `https://admin.localhost`
+(dashboard routed through Traefik). GET/POST/PATCH/DELETE and the
+`Authorization`/`Content-Type` headers are allowed. Overridable per
+environment via `CORS_ALLOWED_ORIGINS` (comma-separated).
 
 ## Soft-delete
 
@@ -62,6 +80,8 @@ All connection and secret values are externalized via environment variables
 in `application.yml` (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`,
 `DB_PASSWORD`, `JWT_SIGNING_KEY`, `SERVER_PORT`). The service fails fast at
 startup if any of them is absent — no silent default for a secret.
+`CORS_ALLOWED_ORIGINS` is also externalized but, unlike the values above, it
+is not a secret, so it ships with a sensible default (see CORS section).
 
 Schema is owned by Flyway (`src/main/resources/db/migration/`); Hibernate
 `ddl-auto` is set to `validate` only.

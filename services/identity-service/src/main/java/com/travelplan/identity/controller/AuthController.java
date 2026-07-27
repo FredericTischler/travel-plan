@@ -20,7 +20,10 @@ import org.springframework.web.bind.annotation.RestController;
  * mapping is handled by {@link com.travelplan.identity.exception.GlobalExceptionHandler}.
  * Token validation on {@code GET /me} is manual (reading the header here,
  * verifying in the service) — there is no Spring Security filter chain in
- * this codebase; {@code /login} and every other route remain unprotected.
+ * this codebase. {@code /login} stays public (no token exists before a
+ * successful login); {@link com.travelplan.identity.controller.UserController}
+ * reuses this exact same manual-validation mechanism to protect the routes
+ * that need it.
  */
 @RestController
 public class AuthController {
