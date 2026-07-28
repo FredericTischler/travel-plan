@@ -48,6 +48,16 @@ services:
       # (postgres_app_users[payment_user].password = changeme_payment_user).
       # => runnable out-of-the-box pour la preuve ; a surcharger via Vault en prod.
       DB_PASSWORD: "${PAYMENT_DB_PASSWORD:-changeme_payment_user}"
+      # --- Cle de signature JWT (PARTAGEE avec identity-service) -----------
+      # CONTRAIREMENT a DB_PASSWORD ci-dessus (propre a ce service), cette
+      # valeur DOIT etre IDENTIQUE a JWT_SIGNING_KEY dans
+      # identity-service/docker-compose.identity.yml : payment-service ne fait
+      # que VERIFIER des jetons HS256 emis par identity-service, jamais n'en
+      # emet lui-meme, et HS256 exige le meme secret cote emetteur et cote
+      # verificateur. Meme valeur de TEST en dur que cote identity (>= 32
+      # octets, exige par jjwt/HS256, RFC 7518 §3.2) ; meme dette technique
+      # assumee (pas de cablage Vault a ce stade).
+      JWT_SIGNING_KEY: "dev-insecure-jwt-signing-key-change-me-0123456789ABCDEF"
     networks:
       - data-net
       - backend-net
