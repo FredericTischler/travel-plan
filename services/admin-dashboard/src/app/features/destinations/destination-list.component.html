@@ -1,0 +1,84 @@
+<h1>Destinations</h1>
+
+<h2>Créer une destination</h2>
+
+<form (ngSubmit)="createDestination()">
+  <div>
+    <label for="createName">Nom</label>
+    <input
+      id="createName"
+      name="createName"
+      type="text"
+      [(ngModel)]="createName"
+      required
+      autocomplete="off"
+    />
+  </div>
+
+  <div>
+    <label for="createCountry">Pays</label>
+    <input
+      id="createCountry"
+      name="createCountry"
+      type="text"
+      [(ngModel)]="createCountry"
+      required
+      autocomplete="off"
+    />
+  </div>
+
+  @if (createError()) {
+    <p role="alert">{{ createError() }}</p>
+  }
+
+  <button type="submit" [disabled]="creating()">
+    {{ creating() ? 'Création…' : 'Créer' }}
+  </button>
+</form>
+
+<h2>Liste</h2>
+
+@if (deleteError()) {
+  <p role="alert">{{ deleteError() }}</p>
+}
+
+@if (loading()) {
+  <p>Chargement…</p>
+} @else if (error()) {
+  <p role="alert">{{ error() }}</p>
+} @else {
+  <table>
+    <thead>
+      <tr>
+        <th>Id</th>
+        <th>Nom</th>
+        <th>Pays</th>
+        <th>Créé le</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (destination of destinations(); track destination.id) {
+        <tr>
+          <td>{{ destination.id }}</td>
+          <td>{{ destination.name }}</td>
+          <td>{{ destination.country }}</td>
+          <td>{{ destination.createdAt }}</td>
+          <td>
+            <button
+              type="button"
+              [disabled]="deletingDestinationId() === destination.id"
+              (click)="deleteDestination(destination)"
+            >
+              {{ deletingDestinationId() === destination.id ? 'Suppression…' : 'Supprimer' }}
+            </button>
+          </td>
+        </tr>
+      } @empty {
+        <tr>
+          <td colspan="5">Aucune destination.</td>
+        </tr>
+      }
+    </tbody>
+  </table>
+}

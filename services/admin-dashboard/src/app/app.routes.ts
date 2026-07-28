@@ -21,4 +21,12 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/payments/payment-list.component').then((m) => m.PaymentListComponent),
   },
+  {
+    path: 'destinations',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/destinations/destination-list.component').then(
+        (m) => m.DestinationListComponent,
+      ),
+  },
 ];

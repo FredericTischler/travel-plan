@@ -7,7 +7,7 @@ import { environment } from '../../../environments/environment';
 import { AuthService } from '../auth/auth.service';
 
 /** URLs of every backend API this dashboard talks to. */
-const API_URLS = [environment.identityApiUrl, environment.paymentApiUrl];
+const API_URLS = [environment.identityApiUrl, environment.paymentApiUrl, environment.travelApiUrl];
 
 /**
  * Adds `Authorization: Bearer <token>` to every outgoing request targeting
