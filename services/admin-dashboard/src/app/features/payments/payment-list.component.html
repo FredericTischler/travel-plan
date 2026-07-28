@@ -1,0 +1,108 @@
+<h1>Paiements</h1>
+
+<h2>Créer un paiement</h2>
+
+<form (ngSubmit)="createPayment()">
+  <div>
+    <label for="createAmount">Montant</label>
+    <input
+      id="createAmount"
+      name="createAmount"
+      type="number"
+      [(ngModel)]="createAmount"
+      required
+      autocomplete="off"
+    />
+  </div>
+
+  <div>
+    <label for="createCurrency">Devise</label>
+    <input
+      id="createCurrency"
+      name="createCurrency"
+      type="text"
+      [(ngModel)]="createCurrency"
+      required
+      autocomplete="off"
+    />
+  </div>
+
+  @if (createError()) {
+    <p role="alert">{{ createError() }}</p>
+  }
+
+  <button type="submit" [disabled]="creating()">
+    {{ creating() ? 'Création…' : 'Créer' }}
+  </button>
+</form>
+
+<h2>Liste</h2>
+
+@if (updateError()) {
+  <p role="alert">{{ updateError() }}</p>
+}
+
+@if (deleteError()) {
+  <p role="alert">{{ deleteError() }}</p>
+}
+
+@if (loading()) {
+  <p>Chargement…</p>
+} @else if (error()) {
+  <p role="alert">{{ error() }}</p>
+} @else {
+  <table>
+    <thead>
+      <tr>
+        <th>Id</th>
+        <th>Montant</th>
+        <th>Devise</th>
+        <th>Statut</th>
+        <th>Référence externe</th>
+        <th>Créé le</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      @for (payment of payments(); track payment.id) {
+        <tr>
+          <td>{{ payment.id }}</td>
+          <td>{{ payment.amount }}</td>
+          <td>{{ payment.currency }}</td>
+          <td>{{ payment.status }}</td>
+          <td>{{ payment.externalReference }}</td>
+          <td>{{ payment.createdAt }}</td>
+          <td>
+            @if (payment.status === 'PENDING') {
+              <button
+                type="button"
+                [disabled]="updatingPaymentId() === payment.id"
+                (click)="markCompleted(payment)"
+              >
+                Marquer complété
+              </button>
+              <button
+                type="button"
+                [disabled]="updatingPaymentId() === payment.id"
+                (click)="markFailed(payment)"
+              >
+                Marquer échoué
+              </button>
+            }
+            <button
+              type="button"
+              [disabled]="deletingPaymentId() === payment.id"
+              (click)="deletePayment(payment)"
+            >
+              {{ deletingPaymentId() === payment.id ? 'Suppression…' : 'Supprimer' }}
+            </button>
+          </td>
+        </tr>
+      } @empty {
+        <tr>
+          <td colspan="7">Aucun paiement.</td>
+        </tr>
+      }
+    </tbody>
+  </table>
+}

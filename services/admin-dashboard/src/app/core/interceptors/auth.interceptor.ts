@@ -6,18 +6,21 @@ import { catchError, throwError } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { AuthService } from '../auth/auth.service';
 
+/** URLs of every backend API this dashboard talks to. */
+const API_URLS = [environment.identityApiUrl, environment.paymentApiUrl];
+
 /**
  * Adds `Authorization: Bearer <token>` to every outgoing request targeting
- * the identity-service API, and — since this project has no refresh-token
- * flow (see AuthService) — clears the stored token and redirects to /login
- * whenever such a request comes back 401 (token missing, invalid or
- * expired).
+ * one of this dashboard's backend APIs, and — since this project has no
+ * refresh-token flow (see AuthService) — clears the stored token and
+ * redirects to /login whenever such a request comes back 401 (token
+ * missing, invalid or expired).
  */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   const authService = inject(AuthService);
   const router = inject(Router);
 
-  const isApiRequest = req.url.startsWith(environment.identityApiUrl);
+  const isApiRequest = API_URLS.some((apiUrl) => req.url.startsWith(apiUrl));
   const token = authService.getToken();
 
   const authorizedReq = isApiRequest && token

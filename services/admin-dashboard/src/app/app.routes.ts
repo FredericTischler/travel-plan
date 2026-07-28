@@ -15,4 +15,10 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./features/users/user-list.component').then((m) => m.UserListComponent),
   },
+  {
+    path: 'payments',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/payments/payment-list.component').then((m) => m.PaymentListComponent),
+  },
 ];
