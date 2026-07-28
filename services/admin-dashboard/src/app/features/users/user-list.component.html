@@ -1,5 +1,47 @@
 <h1>Utilisateurs</h1>
 
+<h2>Créer un utilisateur</h2>
+
+<form (ngSubmit)="createUser()">
+  <div>
+    <label for="createEmail">Email</label>
+    <input
+      id="createEmail"
+      name="createEmail"
+      type="email"
+      [(ngModel)]="createEmail"
+      required
+      autocomplete="off"
+    />
+  </div>
+
+  <div>
+    <label for="createPassword">Mot de passe</label>
+    <input
+      id="createPassword"
+      name="createPassword"
+      type="password"
+      [(ngModel)]="createPassword"
+      required
+      autocomplete="new-password"
+    />
+  </div>
+
+  @if (createError()) {
+    <p role="alert">{{ createError() }}</p>
+  }
+
+  <button type="submit" [disabled]="creating()">
+    {{ creating() ? 'Création…' : 'Créer' }}
+  </button>
+</form>
+
+<h2>Liste</h2>
+
+@if (deleteError()) {
+  <p role="alert">{{ deleteError() }}</p>
+}
+
 @if (loading()) {
   <p>Chargement…</p>
 } @else if (error()) {
@@ -11,18 +53,48 @@
         <th>Id</th>
         <th>Email</th>
         <th>Créé le</th>
+        <th>Actions</th>
       </tr>
     </thead>
     <tbody>
       @for (user of users(); track user.id) {
         <tr>
           <td>{{ user.id }}</td>
-          <td>{{ user.email }}</td>
-          <td>{{ user.createdAt }}</td>
+          @if (editingUserId() === user.id) {
+            <td colspan="2">
+              <form (ngSubmit)="saveEdit(user)">
+                <input
+                  name="editEmail"
+                  type="email"
+                  [(ngModel)]="editEmail"
+                  required
+                  autocomplete="off"
+                />
+                @if (editError()) {
+                  <p role="alert">{{ editError() }}</p>
+                }
+                <button type="submit" [disabled]="editing()">
+                  {{ editing() ? 'Enregistrement…' : 'Enregistrer' }}
+                </button>
+                <button type="button" [disabled]="editing()" (click)="cancelEdit()">Annuler</button>
+              </form>
+            </td>
+          } @else {
+            <td>{{ user.email }}</td>
+            <td>{{ user.createdAt }}</td>
+          }
+          <td>
+            @if (editingUserId() !== user.id) {
+              <button type="button" (click)="startEdit(user)">Éditer</button>
+              <button type="button" [disabled]="deletingUserId() === user.id" (click)="deleteUser(user)">
+                {{ deletingUserId() === user.id ? 'Suppression…' : 'Supprimer' }}
+              </button>
+            }
+          </td>
         </tr>
       } @empty {
         <tr>
-          <td colspan="3">Aucun utilisateur.</td>
+          <td colspan="4">Aucun utilisateur.</td>
         </tr>
       }
     </tbody>
