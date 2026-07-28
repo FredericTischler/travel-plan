@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 
 import { authGuard } from './core/guards/auth.guard';
+import { AppShellComponent } from './shared/layout/app-shell.component';
 
 export const routes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'users' },
@@ -10,23 +11,31 @@ export const routes: Routes = [
       import('./features/login/login.component').then((m) => m.LoginComponent),
   },
   {
-    path: 'users',
+    // Authenticated area: shared layout (nav + theme toggle) wrapping the
+    // existing feature screens, which are otherwise untouched.
+    path: '',
+    component: AppShellComponent,
     canActivate: [authGuard],
-    loadComponent: () =>
-      import('./features/users/user-list.component').then((m) => m.UserListComponent),
-  },
-  {
-    path: 'payments',
-    canActivate: [authGuard],
-    loadComponent: () =>
-      import('./features/payments/payment-list.component').then((m) => m.PaymentListComponent),
-  },
-  {
-    path: 'destinations',
-    canActivate: [authGuard],
-    loadComponent: () =>
-      import('./features/destinations/destination-list.component').then(
-        (m) => m.DestinationListComponent,
-      ),
+    children: [
+      {
+        path: 'users',
+        loadComponent: () =>
+          import('./features/users/user-list.component').then((m) => m.UserListComponent),
+      },
+      {
+        path: 'payments',
+        loadComponent: () =>
+          import('./features/payments/payment-list.component').then(
+            (m) => m.PaymentListComponent,
+          ),
+      },
+      {
+        path: 'destinations',
+        loadComponent: () =>
+          import('./features/destinations/destination-list.component').then(
+            (m) => m.DestinationListComponent,
+          ),
+      },
+    ],
   },
 ];

@@ -1,6 +1,18 @@
 <!doctype html>
 <html lang="en">
 <head>
+  <script>
+    // Apply the persisted theme choice to <html> before first paint, so a
+    // reload respects the user's last choice without a flash of the wrong
+    // theme. Kept in sync with ThemeService (same storage key/class).
+    (function () {
+      try {
+        if (localStorage.getItem('admin-dashboard.theme') === 'dark') {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) {}
+    })();
+  </script>
   <meta charset="utf-8">
   <title>Admin Dashboard</title>
   <base href="/">

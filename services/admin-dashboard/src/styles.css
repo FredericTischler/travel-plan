@@ -1,1 +1,8 @@
 /* You can add global styles to this file, and also import other style files */
+
+@import 'tailwindcss';
+
+/* Manual class-based dark mode (toggled by ThemeService via the `dark`
+   class on <html>), instead of Tailwind v4's default `prefers-color-scheme`
+   strategy. */
+@custom-variant dark (&:where(.dark, .dark *));
