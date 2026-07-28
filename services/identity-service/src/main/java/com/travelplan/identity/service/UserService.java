@@ -1,6 +1,7 @@
 package com.travelplan.identity.service;
 
 import com.travelplan.identity.dto.CreateUserRequest;
+import com.travelplan.identity.dto.UpdateEmailRequest;
 import com.travelplan.identity.dto.UserResponse;
 import com.travelplan.identity.entity.User;
 import com.travelplan.identity.exception.EmailAlreadyActiveException;
@@ -88,5 +89,27 @@ public class UserService {
                 .orElseThrow(() -> new UserNotFoundException(id));
         user.setDeletedAt(OffsetDateTime.now());
         // the dirty check within the transaction persists the change automatically
+    }
+
+    /**
+     * Update the email address of an active user. No other field is touched.
+     *
+     * @throws UserNotFoundException if the user does not exist or is soft-deleted
+     * @throws EmailAlreadyActiveException if another active user already owns the new email
+     */
+    @Transactional
+    public UserResponse updateEmail(UUID id, UpdateEmailRequest request) {
+        User user = userRepository.findActiveById(id)
+                .orElseThrow(() -> new UserNotFoundException(id));
+
+        userRepository.findByEmailAndDeletedAtIsNull(request.getEmail())
+                .filter(existing -> !existing.getId().equals(id))
+                .ifPresent(existing -> {
+                    throw new EmailAlreadyActiveException(request.getEmail());
+                });
+
+        user.setEmail(request.getEmail());
+        // the dirty check within the transaction persists the change automatically
+        return UserResponse.from(user);
     }
 }

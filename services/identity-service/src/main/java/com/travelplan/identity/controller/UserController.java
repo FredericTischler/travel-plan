@@ -1,6 +1,7 @@
 package com.travelplan.identity.controller;
 
 import com.travelplan.identity.dto.CreateUserRequest;
+import com.travelplan.identity.dto.UpdateEmailRequest;
 import com.travelplan.identity.dto.UserResponse;
 import com.travelplan.identity.service.AuthService;
 import com.travelplan.identity.service.UserService;
@@ -9,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -30,11 +32,12 @@ import java.util.UUID;
  *
  * {@code POST /users} stays public: it is the only way to create the very
  * first account, so requiring a token here would be a chicken-and-egg
- * problem. {@code GET /users}, {@code GET /users/{id}} and
- * {@code DELETE /users/{id}} all require a valid Bearer token: the list and
- * the detail endpoint expose the same PII (email), and delete is a
- * destructive operation, so leaving either open while protecting the list
- * would just relocate the same vulnerability rather than close it.
+ * problem. {@code GET /users}, {@code GET /users/{id}},
+ * {@code DELETE /users/{id}} and {@code PATCH /users/{id}} all require a
+ * valid Bearer token: the list and the detail endpoint expose the same PII
+ * (email), and delete/update are destructive or PII-modifying operations, so
+ * leaving either open while protecting the list would just relocate the same
+ * vulnerability rather than close it.
  */
 @RestController
 @RequestMapping("/users")
@@ -101,5 +104,24 @@ public class UserController {
         authService.getCurrentUser(authorizationHeader);
         userService.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Update the email address of an active user. Requires a valid Bearer
+     * token — see class-level note. No other field can be changed through
+     * this endpoint.
+     *
+     * @return 200 with the updated user, 404 if absent or soft-deleted, 409
+     *         if the new email is already active on another user, 400 if the
+     *         request body fails validation, 401 with a generic message if
+     *         the Authorization header is missing/invalid/expired
+     */
+    @PatchMapping("/{id}")
+    public ResponseEntity<UserResponse> updateEmail(
+            @PathVariable UUID id,
+            @Valid @RequestBody UpdateEmailRequest request,
+            @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
+        authService.getCurrentUser(authorizationHeader);
+        return ResponseEntity.ok(userService.updateEmail(id, request));
     }
 }
