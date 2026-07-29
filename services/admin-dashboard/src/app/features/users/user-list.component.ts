@@ -2,6 +2,10 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { AlertComponent } from '../../shared/ui/alert/alert.component';
+import { ButtonComponent } from '../../shared/ui/button/button.component';
+import { CardComponent } from '../../shared/ui/card/card.component';
+import { InputComponent } from '../../shared/ui/input/input.component';
 import { User, UserService } from './user.service';
 
 /**
@@ -11,7 +15,7 @@ import { User, UserService } from './user.service';
  */
 @Component({
   selector: 'app-user-list',
-  imports: [FormsModule],
+  imports: [FormsModule, AlertComponent, ButtonComponent, CardComponent, InputComponent],
   templateUrl: './user-list.component.html',
 })
 export class UserListComponent implements OnInit {

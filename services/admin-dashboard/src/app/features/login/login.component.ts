@@ -3,6 +3,10 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 
 import { AuthService } from '../../core/auth/auth.service';
+import { AlertComponent } from '../../shared/ui/alert/alert.component';
+import { ButtonComponent } from '../../shared/ui/button/button.component';
+import { CardComponent } from '../../shared/ui/card/card.component';
+import { InputComponent } from '../../shared/ui/input/input.component';
 
 /**
  * Login screen: POST /login with email + password, store the returned JWT
@@ -10,7 +14,7 @@ import { AuthService } from '../../core/auth/auth.service';
  */
 @Component({
   selector: 'app-login',
-  imports: [FormsModule],
+  imports: [FormsModule, AlertComponent, ButtonComponent, CardComponent, InputComponent],
   templateUrl: './login.component.html',
 })
 export class LoginComponent {

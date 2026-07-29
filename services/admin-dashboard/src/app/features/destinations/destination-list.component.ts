@@ -2,6 +2,10 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 
+import { AlertComponent } from '../../shared/ui/alert/alert.component';
+import { ButtonComponent } from '../../shared/ui/button/button.component';
+import { CardComponent } from '../../shared/ui/card/card.component';
+import { InputComponent } from '../../shared/ui/input/input.component';
 import { Destination, DestinationService } from './destination.service';
 
 /**
@@ -13,7 +17,7 @@ import { Destination, DestinationService } from './destination.service';
  */
 @Component({
   selector: 'app-destination-list',
-  imports: [FormsModule],
+  imports: [FormsModule, AlertComponent, ButtonComponent, CardComponent, InputComponent],
   templateUrl: './destination-list.component.html',
 })
 export class DestinationListComponent implements OnInit {
