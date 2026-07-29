@@ -64,15 +64,154 @@
                 <td class="table-cell">{{ destination.country }}</td>
                 <td class="table-cell">{{ destination.createdAt }}</td>
                 <td class="table-cell">
-                  <app-button
-                    variant="danger"
-                    [disabled]="deletingDestinationId() === destination.id"
-                    (clicked)="deleteDestination(destination)"
-                  >
-                    {{ deletingDestinationId() === destination.id ? 'Suppression…' : 'Supprimer' }}
-                  </app-button>
+                  <div class="flex flex-wrap gap-2">
+                    <app-button variant="secondary" (clicked)="toggleTransports(destination)">
+                      {{
+                        expandedDestinationId() === destination.id
+                          ? 'Masquer les trajets'
+                          : 'Voir les trajets'
+                      }}
+                    </app-button>
+                    <app-button
+                      variant="danger"
+                      [disabled]="deletingDestinationId() === destination.id"
+                      (clicked)="deleteDestination(destination)"
+                    >
+                      {{
+                        deletingDestinationId() === destination.id ? 'Suppression…' : 'Supprimer'
+                      }}
+                    </app-button>
+                  </div>
                 </td>
               </tr>
+              @if (expandedDestinationId() === destination.id) {
+                <tr class="table-row">
+                  <td class="table-cell bg-slate-50 dark:bg-slate-900/40" colspan="5">
+                    <div class="flex flex-col gap-4">
+                      <div>
+                        <h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          Trajets sortants de {{ destination.name }}
+                        </h3>
+
+                        @if (transportsError()) {
+                          <app-alert variant="error" class="mb-2 block">{{
+                            transportsError()
+                          }}</app-alert>
+                        }
+
+                        @if (transportsLoading()) {
+                          <p class="text-sm text-slate-600 dark:text-slate-300">Chargement…</p>
+                        } @else {
+                          <div class="table-shell">
+                            <table class="table-base">
+                              <thead>
+                                <tr class="table-head-row">
+                                  <th class="table-head-cell">Mode</th>
+                                  <th class="table-head-cell">Durée (min)</th>
+                                  <th class="table-head-cell">Destination</th>
+                                  <th class="table-head-cell">Pays</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                @for (
+                                  transport of transports();
+                                  track transport.destinationId + transport.mode
+                                ) {
+                                  <tr class="table-row">
+                                    <td class="table-cell">{{ transport.mode }}</td>
+                                    <td class="table-cell">{{ transport.durationMinutes }}</td>
+                                    <td class="table-cell">{{ transport.destinationName }}</td>
+                                    <td class="table-cell">{{ transport.destinationCountry }}</td>
+                                  </tr>
+                                } @empty {
+                                  <tr>
+                                    <td class="table-empty-cell" colspan="4">
+                                      Aucun trajet sortant.
+                                    </td>
+                                  </tr>
+                                }
+                              </tbody>
+                            </table>
+                          </div>
+                        }
+                      </div>
+
+                      <div>
+                        <h3 class="mb-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                          Ajouter un trajet
+                        </h3>
+
+                        <form
+                          class="flex flex-wrap items-end gap-4"
+                          (ngSubmit)="createTransport(destination.id)"
+                        >
+                          <div class="flex flex-col gap-1">
+                            <label
+                              for="createTransportToId"
+                              class="text-sm font-medium text-slate-700 dark:text-slate-200"
+                              >Destination cible</label
+                            >
+                            <select
+                              id="createTransportToId"
+                              name="createTransportToId"
+                              [(ngModel)]="createTransportToId"
+                              required
+                              class="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                            >
+                              <option value="" disabled>Choisir…</option>
+                              @for (target of transportTargets(); track target.id) {
+                                <option [value]="target.id">
+                                  {{ target.name }} ({{ target.country }})
+                                </option>
+                              }
+                            </select>
+                          </div>
+
+                          <div class="flex flex-col gap-1">
+                            <label
+                              for="createTransportMode"
+                              class="text-sm font-medium text-slate-700 dark:text-slate-200"
+                              >Mode</label
+                            >
+                            <select
+                              id="createTransportMode"
+                              name="createTransportMode"
+                              [(ngModel)]="createTransportMode"
+                              required
+                              class="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+                            >
+                              <option value="" disabled>Choisir…</option>
+                              @for (mode of transportModes; track mode) {
+                                <option [value]="mode">{{ mode }}</option>
+                              }
+                            </select>
+                          </div>
+
+                          <app-input
+                            fieldId="createTransportDuration"
+                            name="createTransportDuration"
+                            label="Durée (min)"
+                            type="number"
+                            [(ngModel)]="createTransportDuration"
+                            [required]="true"
+                            autocomplete="off"
+                          />
+
+                          <app-button type="submit" [disabled]="creatingTransport()">
+                            {{ creatingTransport() ? 'Création…' : 'Ajouter' }}
+                          </app-button>
+                        </form>
+
+                        @if (createTransportError()) {
+                          <app-alert variant="error" class="mt-2 block">{{
+                            createTransportError()
+                          }}</app-alert>
+                        }
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              }
             } @empty {
               <tr>
                 <td class="table-empty-cell" colspan="5">Aucune destination.</td>
