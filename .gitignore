@@ -83,5 +83,5 @@ temp/
 Thumbs.db
 desktop.ini
 
-# --- Claude Code (config locale ; les agents projet restent versionnés) -----
-.claude/settings.local.json
+# --- Claude Code -------------------------------------------------------------
+.claude/
