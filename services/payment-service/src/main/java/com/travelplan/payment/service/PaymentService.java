@@ -49,10 +49,15 @@ public class PaymentService {
 
     /**
      * Create a new manual payment. Status is always forced to PENDING.
+     *
+     * {@code request.getUserId()} is stored as-is, with no existence check
+     * against identity-service: payment-service has no access to
+     * identity_db, so this ownership reference is a trust boundary assumed
+     * at the application layer, not enforced here.
      */
     @Transactional
     public PaymentResponse create(CreateManualPaymentRequest request) {
-        Payment payment = new Payment(request.getAmount(), request.getCurrency());
+        Payment payment = new Payment(request.getUserId(), request.getAmount(), request.getCurrency());
         Payment saved = paymentRepository.save(payment);
         return PaymentResponse.from(saved);
     }
@@ -113,5 +118,24 @@ public class PaymentService {
                 .orElseThrow(() -> new PaymentNotFoundException(id));
         payment.setDeletedAt(OffsetDateTime.now());
         // the dirty check within the transaction persists the change automatically
+    }
+
+    /**
+     * Soft-delete every active payment belonging to the given user.
+     *
+     * Unlike {@link #delete(UUID)}, an empty result is not an error: a user
+     * with zero active payments simply yields a count of 0, no exception.
+     *
+     * @return the number of payments soft-deleted
+     */
+    @Transactional
+    public int deleteAllByUserId(UUID userId) {
+        List<Payment> activePayments = paymentRepository.findAllActiveByUserId(userId);
+        OffsetDateTime now = OffsetDateTime.now();
+        for (Payment payment : activePayments) {
+            payment.setDeletedAt(now);
+        }
+        // the dirty check within the transaction persists each change automatically
+        return activePayments.size();
     }
 }

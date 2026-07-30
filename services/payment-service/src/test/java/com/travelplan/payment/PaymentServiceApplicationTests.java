@@ -1,5 +1,6 @@
 package com.travelplan.payment;
 
+import com.travelplan.payment.support.TestJwtTokens;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -16,6 +17,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import java.math.BigDecimal;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,16 +26,18 @@ import static org.assertj.core.api.Assertions.assertThat;
  *
  * Uses Testcontainers to spin up a real Postgres instance (same major version
  * as production: 17.x). DynamicPropertySource injects the connection details
- * so that the :? fail-fast guards in application.yml are satisfied without
- * requiring an external Docker Compose stack.
+ * plus a test JWT signing key so that every {@code :?} fail-fast guard in
+ * application.yml (DB_* and JWT_SIGNING_KEY) is satisfied without requiring
+ * an external Docker Compose stack.
  *
  * This test validates:
  *   1. Spring application context loads without errors.
  *   2. DataSourceConfig.validateDataSourceVariables() passes.
- *   3. Flyway applies V1__init.sql against a live Postgres, and the resulting
- *      `payments.amount` column is an exact numeric type (NUMERIC), never
- *      float/double — verified both via information_schema metadata and via
- *      an actual insert/read round-trip of a many-decimal value.
+ *   3. Flyway applies V1__init.sql + V2__add_user_id.sql against a live
+ *      Postgres, and the resulting `payments.amount` column is an exact
+ *      numeric type (NUMERIC), never float/double — verified both via
+ *      information_schema metadata and via an actual insert/read round-trip
+ *      of a many-decimal value (user_id supplied since V2 made it NOT NULL).
  *   4. /actuator/health returns UP against the real Testcontainers database.
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
@@ -54,6 +58,7 @@ class PaymentServiceApplicationTests {
         registry.add("DB_NAME", postgres::getDatabaseName);
         registry.add("DB_USERNAME", postgres::getUsername);
         registry.add("DB_PASSWORD", postgres::getPassword);
+        registry.add("JWT_SIGNING_KEY", () -> TestJwtTokens.SIGNING_KEY);
     }
 
     @Autowired
@@ -92,8 +97,8 @@ class PaymentServiceApplicationTests {
         //    (float/double) cannot represent this exactly; NUMERIC can.
         BigDecimal preciseAmount = new BigDecimal("1234.123456789012");
         jdbcTemplate.update(
-                "INSERT INTO payments (amount, currency) VALUES (?, ?)",
-                preciseAmount, "EUR");
+                "INSERT INTO payments (user_id, amount, currency) VALUES (?, ?, ?)",
+                UUID.randomUUID(), preciseAmount, "EUR");
 
         BigDecimal stored = jdbcTemplate.queryForObject(
                 "SELECT amount FROM payments WHERE currency = 'EUR'",

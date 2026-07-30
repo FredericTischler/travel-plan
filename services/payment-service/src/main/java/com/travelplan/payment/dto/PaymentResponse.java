@@ -15,15 +15,17 @@ import java.util.UUID;
 public class PaymentResponse {
 
     private final UUID id;
+    private final UUID userId;
     private final BigDecimal amount;
     private final String currency;
     private final String status;
     private final String externalReference;
     private final OffsetDateTime createdAt;
 
-    private PaymentResponse(UUID id, BigDecimal amount, String currency, String status,
+    private PaymentResponse(UUID id, UUID userId, BigDecimal amount, String currency, String status,
                              String externalReference, OffsetDateTime createdAt) {
         this.id = id;
+        this.userId = userId;
         this.amount = amount;
         this.currency = currency;
         this.status = status;
@@ -34,6 +36,7 @@ public class PaymentResponse {
     public static PaymentResponse from(Payment payment) {
         return new PaymentResponse(
                 payment.getId(),
+                payment.getUserId(),
                 payment.getAmount(),
                 payment.getCurrency(),
                 payment.getStatus(),
@@ -43,6 +46,10 @@ public class PaymentResponse {
 
     public UUID getId() {
         return id;
+    }
+
+    public UUID getUserId() {
+        return userId;
     }
 
     public BigDecimal getAmount() {

@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 /**
  * Request body for {@code POST /payments}.
@@ -21,6 +22,9 @@ import java.math.BigDecimal;
 public class CreateManualPaymentRequest {
 
     @NotNull(message = "must not be null")
+    private UUID userId;
+
+    @NotNull(message = "must not be null")
     @DecimalMin(value = "0.01", message = "must be greater than zero")
     private BigDecimal amount;
 
@@ -30,6 +34,14 @@ public class CreateManualPaymentRequest {
 
     public CreateManualPaymentRequest() {
         // required for Jackson deserialization
+    }
+
+    public UUID getUserId() {
+        return userId;
+    }
+
+    public void setUserId(UUID userId) {
+        this.userId = userId;
     }
 
     public BigDecimal getAmount() {

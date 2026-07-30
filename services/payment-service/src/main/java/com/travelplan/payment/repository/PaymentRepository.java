@@ -28,4 +28,13 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
      */
     @Query("SELECT p FROM Payment p WHERE p.deletedAt IS NULL")
     List<Payment> findAllActive();
+
+    /**
+     * Return all non-deleted payments belonging to the given user.
+     *
+     * Backed by a partial index on (user_id) WHERE deleted_at IS NULL
+     * (V2__add_user_id.sql), matching this exact query shape.
+     */
+    @Query("SELECT p FROM Payment p WHERE p.userId = :userId AND p.deletedAt IS NULL")
+    List<Payment> findAllActiveByUserId(@Param("userId") UUID userId);
 }

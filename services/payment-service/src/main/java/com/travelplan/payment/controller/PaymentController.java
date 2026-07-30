@@ -1,6 +1,7 @@
 package com.travelplan.payment.controller;
 
 import com.travelplan.payment.dto.CreateManualPaymentRequest;
+import com.travelplan.payment.dto.DeleteByUserResponse;
 import com.travelplan.payment.dto.PaymentResponse;
 import com.travelplan.payment.dto.UpdateStatusRequest;
 import com.travelplan.payment.service.PaymentService;
@@ -121,5 +122,33 @@ public class PaymentController {
         tokenValidationService.requireValidToken(authorizationHeader);
         paymentService.delete(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * Soft-delete every active payment belonging to a user, in one call.
+     *
+     * <p><b>Intended caller:</b> this endpoint exists for identity-service to
+     * invoke when a user is deleted there (cascading the soft-delete to that
+     * user's payments) — it is NOT meant to be called by the admin dashboard
+     * directly. No such call is wired yet: this increment only adds the
+     * endpoint itself, no automatic cascade trigger.</p>
+     *
+     * <p><b>Auth for the eventual service-to-service call:</b> for now this
+     * endpoint is protected by the exact same Bearer token mechanism as every
+     * other route here — no dedicated service-to-service auth, role, or scope
+     * has been introduced. How identity-service will actually obtain and
+     * present a token to call this endpoint is deliberately left open, to be
+     * decided in a separate future "cascade" increment.</p>
+     *
+     * @return 200 with the number of payments soft-deleted (0 if the user had none),
+     *         401 with a generic message if the Authorization header is missing/invalid/expired
+     */
+    @DeleteMapping("/by-user/{userId}")
+    public ResponseEntity<DeleteByUserResponse> deleteAllByUser(
+            @PathVariable UUID userId,
+            @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
+        tokenValidationService.requireValidToken(authorizationHeader);
+        int deletedCount = paymentService.deleteAllByUserId(userId);
+        return ResponseEntity.ok(new DeleteByUserResponse(deletedCount));
     }
 }

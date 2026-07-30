@@ -25,6 +25,11 @@ import java.util.UUID;
  * Soft-delete pattern: rows are never physically removed. The service sets
  * {@code deleted_at} to mark a payment as inactive. Queries filtering active
  * payments always include {@code WHERE deleted_at IS NULL}.
+ *
+ * {@code userId} (V2__add_user_id.sql) is a plain UUID with no JPA
+ * relationship/FK: payment-service has no access to identity-service's
+ * database, so ownership is a logical reference only, never validated for
+ * existence here.
  */
 @Entity
 @Table(name = "payments")
@@ -38,6 +43,9 @@ public class Payment {
     @GeneratedValue(strategy = GenerationType.UUID)
     @Column(name = "id", nullable = false, updatable = false, columnDefinition = "uuid")
     private UUID id;
+
+    @Column(name = "user_id", nullable = false, updatable = false, columnDefinition = "uuid")
+    private UUID userId;
 
     @Column(name = "amount", nullable = false)
     private BigDecimal amount;
@@ -62,7 +70,8 @@ public class Payment {
         // required by JPA
     }
 
-    public Payment(BigDecimal amount, String currency) {
+    public Payment(UUID userId, BigDecimal amount, String currency) {
+        this.userId = userId;
         this.amount = amount;
         this.currency = currency;
         this.status = STATUS_PENDING;
@@ -71,6 +80,10 @@ public class Payment {
 
     public UUID getId() {
         return id;
+    }
+
+    public UUID getUserId() {
+        return userId;
     }
 
     public BigDecimal getAmount() {
