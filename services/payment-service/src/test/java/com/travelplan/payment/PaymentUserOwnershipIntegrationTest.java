@@ -115,6 +115,42 @@ class PaymentUserOwnershipIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
+    @Test
+    void deleteByUserAcceptsServiceToken() {
+        UUID userId = UUID.randomUUID();
+        UUID paymentId = createPayment(userId);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(TestJwtTokens.serviceToken());
+        ResponseEntity<Map> deleteResponse = restTemplate.exchange(
+                "/payments/by-user/" + userId, HttpMethod.DELETE, new HttpEntity<>(headers), Map.class);
+
+        assertThat(deleteResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(deleteResponse.getBody()).containsEntry("deletedCount", 1);
+        assertThat(getPayment(paymentId).getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void serviceTokenRejectedOnOtherEndpoints() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(TestJwtTokens.serviceToken());
+
+        Map<String, Object> body = Map.of("userId", UUID.randomUUID().toString(), "amount", 5.00, "currency", "EUR");
+        ResponseEntity<Map> createResponse = restTemplate.exchange(
+                "/payments", HttpMethod.POST, new HttpEntity<>(body, headers), Map.class);
+        assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+
+        ResponseEntity<Map> getAllResponse = restTemplate.exchange(
+                "/payments", HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+        assertThat(getAllResponse.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+
+        UUID somePaymentId = createPayment(UUID.randomUUID());
+        ResponseEntity<Map> deleteResponse = restTemplate.exchange(
+                "/payments/" + somePaymentId, HttpMethod.DELETE, new HttpEntity<>(headers), Map.class);
+        assertThat(deleteResponse.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
     private UUID createPayment(UUID userId) {
         Map<String, Object> body = Map.of("userId", userId.toString(), "amount", 7.50, "currency", "USD");
         ResponseEntity<Map> response = restTemplate.exchange(

@@ -57,6 +57,10 @@ class UserLifecycleIntegrationTest {
         registry.add("DB_USERNAME", postgres::getUsername);
         registry.add("DB_PASSWORD", postgres::getPassword);
         registry.add("JWT_SIGNING_KEY", () -> "test-only-signing-key-must-be-at-least-32-bytes-long");
+        // Not exercised by this test's assertions (only that DELETE /users/{id}
+        // itself returns 204) — nothing listens here, so PaymentServiceClient's
+        // cascade call fails silently, same as UserDeleteCascadeFailureIntegrationTest.
+        registry.add("PAYMENT_SERVICE_URL", () -> "http://localhost:1");
     }
 
     @Autowired

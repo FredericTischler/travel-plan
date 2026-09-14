@@ -4,6 +4,7 @@ import com.travelplan.identity.dto.CreateUserRequest;
 import com.travelplan.identity.dto.UpdateEmailRequest;
 import com.travelplan.identity.dto.UserResponse;
 import com.travelplan.identity.service.AuthService;
+import com.travelplan.identity.service.PaymentServiceClient;
 import com.travelplan.identity.service.UserService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -45,10 +46,13 @@ public class UserController {
 
     private final UserService userService;
     private final AuthService authService;
+    private final PaymentServiceClient paymentServiceClient;
 
-    public UserController(UserService userService, AuthService authService) {
+    public UserController(UserService userService, AuthService authService,
+            PaymentServiceClient paymentServiceClient) {
         this.userService = userService;
         this.authService = authService;
+        this.paymentServiceClient = paymentServiceClient;
     }
 
     /**
@@ -93,6 +97,14 @@ public class UserController {
     /**
      * Soft-delete an active user. Requires a valid Bearer token — see class-level note.
      *
+     * <p>After the user is soft-deleted, cascades the deletion to that user's
+     * payments in payment-service via {@link PaymentServiceClient}. This call
+     * happens AFTER {@code userService.delete(id)} returns (its
+     * {@code @Transactional} boundary has already committed) so the outbound
+     * HTTP call never holds a DB transaction open. If the cascade call fails,
+     * it is logged and swallowed — see {@link PaymentServiceClient} javadoc —
+     * the user stays deleted regardless.</p>
+     *
      * @return 204 No Content on success, 404 if absent or already soft-deleted,
      *         401 with a generic message if the Authorization header is
      *         missing/invalid/expired
@@ -103,6 +115,7 @@ public class UserController {
             @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
         authService.getCurrentUser(authorizationHeader);
         userService.delete(id);
+        paymentServiceClient.deleteAllPaymentsForUser(id);
         return ResponseEntity.noContent().build();
     }
 

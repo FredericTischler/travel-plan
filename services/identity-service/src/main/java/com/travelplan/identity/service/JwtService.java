@@ -44,6 +44,15 @@ public class JwtService {
     private static final Duration TOKEN_VALIDITY = Duration.ofMinutes(15);
     private static final String CLAIM_EMAIL = "email";
 
+    /**
+     * Subject of the service-to-service token minted by
+     * {@link #generateServiceToken()}. payment-service recognizes this exact
+     * subject and scopes it to a single endpoint
+     * ({@code DELETE /payments/by-user/{userId}}) — see its
+     * {@code TokenValidationService}.
+     */
+    private static final String SERVICE_IDENTITY_SUBJECT = "service:identity";
+
     @Value("${jwt.signing-key}")
     private String signingKeySecret;
 
@@ -70,6 +79,23 @@ public class JwtService {
         return Jwts.builder()
                 .subject(user.getId().toString())
                 .claim(CLAIM_EMAIL, user.getEmail())
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plus(TOKEN_VALIDITY)))
+                .signWith(signingKey, Jwts.SIG.HS256)
+                .compact();
+    }
+
+    /**
+     * Issue a short-lived (15 min) service-to-service token identifying this
+     * service to payment-service, for the sole purpose of cascading a user
+     * soft-delete to that user's payments (see {@code PaymentServiceClient}).
+     * Subject = {@code service:identity}, no email claim, no user identity —
+     * this is not a user's token.
+     */
+    public String generateServiceToken() {
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject(SERVICE_IDENTITY_SUBJECT)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(TOKEN_VALIDITY)))
                 .signWith(signingKey, Jwts.SIG.HS256)

@@ -55,6 +55,12 @@ services:
       # partage de cle inter-services). A rebrancher sur Vault si un 2e service
       # doit un jour verifier ces jetons.
       JWT_SIGNING_KEY: "dev-insecure-jwt-signing-key-change-me-0123456789ABCDEF"
+      # --- Cascade vers payment-service ------------------------------------
+      # Utilise par PaymentServiceClient pour DELETE /payments/by-user/{userId}
+      # apres un DELETE /users/{id} reussi. Nom de service Docker
+      # `payment-service`, port INTERNE 8080, meme reseau backend-net que
+      # identity-service (pas de Traefik/TLS pour cet appel interne).
+      PAYMENT_SERVICE_URL: "http://payment-service:8080"
     networks:
       - data-net
       - backend-net

@@ -44,4 +44,21 @@ public final class TestJwtTokens {
                 .signWith(key, Jwts.SIG.HS256)
                 .compact();
     }
+
+    /**
+     * The service-to-service token identity-service mints to call
+     * {@code DELETE /payments/by-user/{userId}} (subject
+     * {@code "service:identity"}, no email claim). Same signing key / 15 min
+     * validity / HS256 pattern as {@link #validToken()}.
+     */
+    public static String serviceToken() {
+        SecretKey key = Keys.hmacShaKeyFor(SIGNING_KEY.getBytes(StandardCharsets.UTF_8));
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject("service:identity")
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plus(Duration.ofMinutes(15))))
+                .signWith(key, Jwts.SIG.HS256)
+                .compact();
+    }
 }

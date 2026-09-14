@@ -32,6 +32,12 @@ jwt:
   # jjwt itself rejects a shorter key with WeakKeyException (RFC 7518 §3.2).
   signing-key: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
 
+payment-service:
+  # Base URL identity-service uses to cascade a user soft-delete to
+  # payment-service (DELETE /payments/by-user/{userId}, see PaymentServiceClient).
+  # No default, no Vault client here — same fail-fast idiom as DB_*/JWT_SIGNING_KEY.
+  url: ${PAYMENT_SERVICE_URL:?PAYMENT_SERVICE_URL is required}
+
 cors:
   # Browser origins allowed to call this API (see CorsConfig). Not a secret —
   # a sensible default is fine here, unlike JWT_SIGNING_KEY/DB_* above.

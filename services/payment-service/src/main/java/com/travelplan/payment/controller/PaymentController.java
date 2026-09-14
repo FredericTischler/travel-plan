@@ -133,12 +133,14 @@ public class PaymentController {
      * directly. No such call is wired yet: this increment only adds the
      * endpoint itself, no automatic cascade trigger.</p>
      *
-     * <p><b>Auth for the eventual service-to-service call:</b> for now this
-     * endpoint is protected by the exact same Bearer token mechanism as every
-     * other route here — no dedicated service-to-service auth, role, or scope
-     * has been introduced. How identity-service will actually obtain and
-     * present a token to call this endpoint is deliberately left open, to be
-     * decided in a separate future "cascade" increment.</p>
+     * <p><b>Auth for the service-to-service call:</b> this endpoint accepts a
+     * Bearer token whose subject is exactly {@code service:identity} — the
+     * dedicated service-to-service token identity-service mints for this one
+     * call (see {@code JwtService.generateServiceToken()} there) — in
+     * addition to a normal user token. That token is scoped exclusively to
+     * this endpoint: {@link TokenValidationService#requireValidToken} used by
+     * every other route explicitly rejects it. See
+     * {@link TokenValidationService#requireUserOrServiceToken}.</p>
      *
      * @return 200 with the number of payments soft-deleted (0 if the user had none),
      *         401 with a generic message if the Authorization header is missing/invalid/expired
@@ -147,7 +149,7 @@ public class PaymentController {
     public ResponseEntity<DeleteByUserResponse> deleteAllByUser(
             @PathVariable UUID userId,
             @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
-        tokenValidationService.requireValidToken(authorizationHeader);
+        tokenValidationService.requireUserOrServiceToken(authorizationHeader);
         int deletedCount = paymentService.deleteAllByUserId(userId);
         return ResponseEntity.ok(new DeleteByUserResponse(deletedCount));
     }
