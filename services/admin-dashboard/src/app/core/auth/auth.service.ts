@@ -50,8 +50,50 @@ export class AuthService {
     return this.tokenSignal();
   }
 
+  /**
+   * Returns the id of the currently logged-in user, read from the `sub`
+   * claim of the stored JWT (see identity-service JwtService#generateToken:
+   * subject = user id). Returns null if there is no token or it cannot be
+   * decoded.
+   */
+  getCurrentUserId(): string | null {
+    const token = this.tokenSignal();
+    if (!token) {
+      return null;
+    }
+
+    const claims = this.decodeJwtPayload(token);
+    return typeof claims?.['sub'] === 'string' ? claims['sub'] : null;
+  }
+
   logout(): void {
     this.setToken(null);
+  }
+
+  /**
+   * Minimal JWT payload decoding (base64url -> JSON) — no signature
+   * verification, which is fine here since this only reads a claim already
+   * trusted by the backend that issued and will re-verify the token on
+   * every request.
+   */
+  private decodeJwtPayload(token: string): Record<string, unknown> | null {
+    const parts = token.split('.');
+    if (parts.length !== 3) {
+      return null;
+    }
+
+    try {
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const json = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map((char) => '%' + char.charCodeAt(0).toString(16).padStart(2, '0'))
+          .join(''),
+      );
+      return JSON.parse(json) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
   }
 
   private setToken(token: string | null): void {
