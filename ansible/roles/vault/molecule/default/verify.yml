@@ -85,7 +85,17 @@
       register: s_travel_db
       no_log: true
 
-    - name: "Assert the 5 secret paths exist with expected keys"
+    - name: "Read shared/jwt"
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        auth_method: token
+        token: "{{ root_token }}"
+        engine_mount_point: "{{ kv_mount }}"
+        path: "shared/jwt"
+      register: s_shared_jwt
+      no_log: true
+
+    - name: "Assert the 6 secret paths exist with expected keys"
       ansible.builtin.assert:
         that:
           # identity/db : contrat coherent avec le role postgres.
@@ -105,8 +115,12 @@
           - "['host','password','port','username'] | difference(s_travel_db.data.data.keys() | list) | length == 0"
           - "s_travel_db.data.data.username == 'neo4j'"
           - "s_travel_db.data.data.host == 'neo4j'"
+          # shared/jwt : cle HS256 PARTAGEE (identity emet, payment/travel verifient).
+          # Contrainte jjwt/HS256 (RFC 7518 §3.2) : >= 32 octets.
+          - "['signing_key'] | difference(s_shared_jwt.data.data.keys() | list) | length == 0"
+          - "s_shared_jwt.data.data.signing_key | length >= 32"
         fail_msg: "Un chemin de secret manque ou ses cles ne correspondent pas au contrat."
-        success_msg: "Les 5 chemins existent avec les cles attendues."
+        success_msg: "Les 6 chemins existent avec les cles attendues."
 
     # ---- 2bis) Secret d'administration infra/postgres-superuser -------------
     - name: "Read infra/postgres-superuser (admin secret, hors policies service)"

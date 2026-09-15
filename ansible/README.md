@@ -15,7 +15,7 @@ regroupé dans [Non implémenté](#non-implémenté).
 
 ```
 ansible/
-  roles/            6 rôles
+  roles/            8 rôles
   README.md
 ```
 
@@ -28,11 +28,13 @@ Molecule.
 | Rôle | Ce qu'il fait réellement |
 |---|---|
 | `docker-host/` | Prépare l'hôte Ubuntu (jammy/noble) : pré-check **non destructif** des paquets distro conflictuels (`docker.io`, `docker-compose`, `docker-compose-v2`, `docker-doc`, `podman-docker`, `containerd`, `runc`) — le rôle échoue et demande un retrait manuel, il ne supprime rien ; clé GPG Docker dans `/etc/apt/keyrings/docker.asc` ; dépôt APT deb822 ; installe `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin` ; démon `enabled` + `started` ; ajoute `docker_host_users` au groupe `docker`. Ne configure **pas** le démon et ne crée **aucun** réseau. |
-| `postgres/` | Rend `compose.postgres.yml` (`postgres:17.5-bookworm`, réseau `data-net`, `mem_limit: 256m`, volume nommé, aucun port publié). Provisionne l'instance via `community.postgresql` : 2 comptes `NOSUPERUSER,NOCREATEDB,NOCREATEROLE,LOGIN` (`identity_user`, `payment_user`), 2 bases dont ils sont chacun propriétaire (`identity_db`, `payment_db`), `REVOKE CONNECT` à `PUBLIC` puis `GRANT CONNECT` au seul propriétaire. Aucune table métier (Flyway côté services). Peut lire ses credentials depuis Vault via `postgres_vault_read` (**`false` par défaut**). |
+| `postgres/` | Rend `compose.postgres.yml` (`postgres:17.5-bookworm`, réseau `data-net`, `mem_limit: 256m`, volume nommé, aucun port publié). Provisionne l'instance via `community.postgresql` : 2 comptes `NOSUPERUSER,NOCREATEDB,NOCREATEROLE,LOGIN` (`identity_user`, `payment_user`), 2 bases dont ils sont chacun propriétaire (`identity_db`, `payment_db`), `REVOKE CONNECT` à `PUBLIC` puis `GRANT CONNECT` au seul propriétaire. Aucune table métier (Flyway côté services). Peut lire dans Vault les mots de passe des comptes qu'il provisionne via `postgres_vault_read` (**`false` par défaut**) : cette lecture sert **uniquement** au bloc `provision`, le rôle n'écrit plus rien dans `/opt/travel-plan/.env` (cf. `app-secrets/`). |
+| `app-secrets/` | Propriétaire **unique** de `/opt/travel-plan/.env`, auto-chargé par Compose depuis le répertoire du `docker-compose.yml` top-level. Lit les secrets runtime dans Vault (KV v2, mount `secret`) — mot de passe superuser Postgres, mots de passe DB des services, clé de signature JWT partagée — et rend le `.env` **intégralement** via un seul `template` : un fichier, un propriétaire, sinon deux rôles le templatant chacun s'écraseraient mutuellement à chaque run (`changed` systématique, idempotence violée). Flag `app_secrets_vault_read` (**`false` par défaut**) : à `false`, **no-op intégral** — aucune lecture Vault, aucun fichier écrit (même pattern Molecule-safe que `postgres_vault_read`). Aucune auth Vault côté service (ni AppRole ni Vault Agent) : c'est Ansible, avec son token, qui lit et pousse. |
 | `neo4j/` | Rend `compose.neo4j.yml` : `neo4j:5.26.6-community`, `data-net`, `mem_limit: 1g`, volume nommé, healthcheck, aucun port publié. Aucun schéma / contrainte / index métier. |
-| `vault/` | Rend `compose.vault.yml` (`hashicorp/vault:1.18.3` en **dev mode**, `data-net`, `mem_limit: 96m`, aucun port publié). Vérifie le moteur KV v2 sur `secret/`, écrit 6 chemins (`infra/postgres-superuser`, `identity/db`, `payment/db`, `payment/stripe`, `payment/paypal`, `travel/db`) en read-before-write, et pose 3 policies cloisonnées (`identity-policy`, `payment-policy`, `travel-policy`), chacune limitée à son préfixe. |
+| `vault/` | Rend `compose.vault.yml` (`hashicorp/vault:1.18.3` en **dev mode**, `data-net`, `mem_limit: 96m`, aucun port publié). Vérifie le moteur KV v2 sur `secret/`, écrit 7 chemins (`infra/postgres-superuser`, `identity/db`, `payment/db`, `payment/stripe`, `payment/paypal`, `travel/db`, `shared/jwt`) en read-before-write, et pose 3 policies cloisonnées (`identity-policy`, `payment-policy`, `travel-policy`), chacune limitée à son préfixe. |
 | `traefik/` | La gateway : **seul rôle publiant un port** (443) et seul à chevaucher `edge-net` + `backend-net`. Rend `compose.traefik.yml` (`traefik:v3.7.1`, `mem_limit: 128m`, socket Docker monté en **lecture seule** `:ro`), la config statique (entrypoint `websecure`, provider Docker avec `exposedByDefault: false`, provider file, endpoint `ping`), la config dynamique TLS, et génère un certificat auto-signé (mkcert si présent, sinon openssl). Dashboard désactivé par défaut (`traefik_dashboard_enabled: false`). |
 | `compose-assembly/` | Crée les 3 réseaux bridge via `community.docker.docker_network` et rend le `docker-compose.yml` top-level qui assemble les fragments (`include:`) et applique les profils. |
+| `jenkins/` | Le contrôleur CI, profil Compose **`ci`** : rend `compose.jenkins.yml` (image épinglée, `JENKINS_HOME` sur volume nommé, `backend-net`, aucun port publié, route Traefik par labels) et provisionne 3 jobs Pipeline — un par service — jouant `./mvnw test`, **déclenchés à la main** (pas de webhook). |
 
 Aucun autre rôle n'existe : `common`, `observability` et `app-deploy`, annoncés dans
 une version antérieure de ce fichier, **n'ont jamais été écrits**.
@@ -57,6 +59,7 @@ fragments puis applique les profils **par merge** sur les services inclus :
 |---|---|
 | `core` | `postgres`, `vault`, `traefik` |
 | `full` | `core` + `neo4j` + les services applicatifs activés |
+| `ci` | `jenkins`, à la demande (`assembly_jenkins_enabled`, `false` par défaut) |
 
 Traefik est dans `core` parce qu'il est le seul point d'entrée : sans lui la stack
 `core` n'est joignable de nulle part. Neo4j (poste RAM le plus lourd, `mem_limit: 1g`)
@@ -93,7 +96,8 @@ ansible-playbook ansible/roles/compose-assembly/test-local.yml -K \
 ```
 
 **Ordre d'application** : les rôles de service (`postgres`, `vault`, `neo4j`,
-`traefik`) d'abord, `compose-assembly` **en dernier** — il assemble des fragments déjà
+`traefik`) d'abord, puis `app-secrets` (il lit un Vault déjà provisionné pour rendre
+le `.env`), `compose-assembly` **en dernier** — il assemble des fragments déjà
 rendus. Cet ordre est documenté en commentaire dans `compose-assembly/test-local.yml`,
 il n'est pas automatisé (pas de `site.yml`).
 
@@ -105,16 +109,18 @@ il n'est pas automatisé (pas de `site.yml`).
 | `vault` | **Molecule**, même structure, `verify` en approche contrôleur |
 | `neo4j` | **Molecule**, même structure |
 | `traefik` | **Molecule** : rend certs/configs/fragment puis démarre un **vrai** conteneur `traefik:v3.7.1` contre cette config (Traefik fail-fast sur clé statique inconnue → healthy = preuve de validité) |
+| `app-secrets` | **Molecule** : couvre la garantie no-op avec `app_secrets_vault_read: false` (rien d'écrit) et l'idempotence. Ne couvre **pas** le chemin Vault, qui exigerait un Vault provisionné et des secrets réels |
+| `jenkins` | **Molecule**, même structure |
 | `docker-host` | **Pas de Molecule** : tester l'installation de Docker exigerait du DinD, écarté (documenté dans `roles/docker-host/README.md`). Validation = `test-local.yml` appliqué réellement + 2ᵉ run manuel pour l'idempotence |
 | `compose-assembly` | **Pas de Molecule** : validation via `test-local.yml` (crée réellement les réseaux et rend le `docker-compose.yml` top-level) |
 
-Les 4 scénarios Molecule utilisent le driver **docker en conteneurs frères** (Linux
+Les 6 scénarios Molecule utilisent le driver **docker en conteneurs frères** (Linux
 natif, pas de DinD) et une `test_sequence` explicite contenant `idempotence` : un 2ᵉ
 converge doit rapporter `changed=0`.
 
 ```bash
 source .venv-ansible/bin/activate
-cd ansible/roles/<postgres|vault|neo4j|traefik>/molecule/default && molecule test
+cd ansible/roles/<postgres|vault|neo4j|traefik|app-secrets|jenkins>/molecule/default && molecule test
 ```
 
 ```bash
@@ -163,6 +169,27 @@ Les `defaults/` portent des valeurs `changeme_*` explicitement marquées à surc
 clés Stripe/PayPal). Ce sont des **placeholders de développement**, pas des secrets :
 aucun credential réel n'est versionné. Toute valeur réelle doit être fournie en
 surcharge (`-e`, ou fichier chiffré `ansible-vault`).
+
+Au runtime, les secrets consommés par Compose transitent par `/opt/travel-plan/.env`,
+rendu par le **seul** rôle `app-secrets` depuis Vault (`app_secrets_vault_read=true`).
+Les fragments Compose référencent ces variables en `${VAR:?...}`, **sans fallback** :
+si le `.env` n'a pas été rendu, la stack refuse de démarrer au lieu de tourner sur un
+placeholder. Le rôle `postgres` relit Vault de son côté (`postgres_vault_read`) pour
+provisionner ses comptes, et n'écrit pas le `.env`.
+
+**Un seul flag pour les deux rôles.** `postgres_vault_read` vaut désormais
+`{{ app_secrets_vault_read | default(false) }}` : les deux rôles lisent Vault
+ensemble ou pas du tout. Il n'y a pas de `site.yml` — chaque rôle est joué par une
+invocation `ansible-playbook` distincte, sans état partagé entre processus — donc en
+run réel il faut passer `-e app_secrets_vault_read=true` sur **les deux** invocations
+(`postgres` **et** `app-secrets`), avec le même nom de variable. Sinon le conteneur
+Postgres démarre avec le vrai secret Vault alors que le bloc `provision` se connecte
+avec `changeme_postgres_superuser` → **échec d'authentification** ; et les mots de
+passe `identity_user` / `payment_user` divergent entre la base et le `.env` →
+**mismatch runtime silencieux** pour identity-service et payment-service. Un
+découplage volontaire reste possible via `-e postgres_vault_read=false` explicite.
+Joué seul (Molecule, `test-local.yml`), `app_secrets_vault_read` est indéfinie :
+`postgres_vault_read` retombe à `false`, comportement inchangé.
 
 ## Non implémenté
 

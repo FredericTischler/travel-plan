@@ -38,23 +38,24 @@ services:
       # (postgres_databases / postgres_app_users : identity_db / identity_user).
       DB_NAME: "identity_db"
       DB_USERNAME: "identity_user"
-      # --- DETTE TECHNIQUE ASSUMEE : mot de passe DB -----------------------
-      # Le .env genere par le role postgres ne porte QUE POSTGRES_SUPERUSER_PASSWORD
-      # (secret superuser de provisioning), PAS le mot de passe du compte applicatif
-      # identity_user. Le mecanisme .env n'est donc PAS reutilisable tel quel ici.
-      # On interpole IDENTITY_DB_PASSWORD (a alimenter via .env/Vault en prod, comme
-      # le fait le role postgres pour son superuser) avec, en FALLBACK dev, le meme
-      # placeholder "changeme_*" que le role postgres embarque dans ses defaults
-      # (postgres_app_users[identity_user].password = changeme_identity_user).
-      # => runnable out-of-the-box pour la preuve ; a surcharger via Vault en prod.
-      DB_PASSWORD: "${IDENTITY_DB_PASSWORD:-changeme_identity_user}"
-      # --- DETTE TECHNIQUE ASSUMEE : cle de signature JWT ------------------
-      # Valeur de TEST en dur (>= 32 octets, exige par jjwt/HS256, RFC 7518 §3.2).
-      # PAS de cablage Vault a ce stade : decision actee (projet a echelle reduite,
-      # UN SEUL service emet ET verifie le JWT, aucun besoin de rotation ni de
-      # partage de cle inter-services). A rebrancher sur Vault si un 2e service
-      # doit un jour verifier ces jetons.
-      JWT_SIGNING_KEY: "dev-insecure-jwt-signing-key-change-me-0123456789ABCDEF"
+      # --- Mot de passe DB : FAIL-FAST, aucun fallback ---------------------
+      # IDENTITY_DB_PASSWORD est alimente par /opt/travel-plan/.env, rendu depuis
+      # Vault (secret/identity/db, cle `password`) par le role Ansible app-secrets.
+      # `:?` et PAS `:-changeme_identity_user` : un fallback fournirait TOUJOURS une
+      # valeur non-vide au conteneur, ce qui neutralise le fail-fast de
+      # application.yml et cree un mismatch SILENCIEUX si le compte identity_user a
+      # ete provisionne avec un autre secret (echec d'auth au runtime, pas au
+      # parsing). Meme idiome que PAYMENT_DB_PASSWORD / NEO4J_PASSWORD.
+      DB_PASSWORD: "${IDENTITY_DB_PASSWORD:?set via env/Vault}"
+      # --- Cle de signature JWT (EMETTEUR, cle PARTAGEE) -------------------
+      # identity-service EMET les jetons HS256 ; payment-service et
+      # travel-service les VERIFIENT avec la MEME cle (HS256 = secret partage,
+      # >= 32 octets exige par jjwt, RFC 7518 §3.2).
+      # Source unique : secret/shared/jwt (cle `signing_key`) -> rendu dans
+      # /opt/travel-plan/.env par le role Ansible app-secrets, interpole ici.
+      # Aucune valeur en dur : `:?` fait echouer le parsing Compose des trois
+      # fragments a l'identique si la cle manque.
+      JWT_SIGNING_KEY: "${JWT_SIGNING_KEY:?set via env/Vault}"
       # --- Cascade vers payment-service ------------------------------------
       # Utilise par PaymentServiceClient pour DELETE /payments/by-user/{userId}
       # apres un DELETE /users/{id} reussi. Nom de service Docker

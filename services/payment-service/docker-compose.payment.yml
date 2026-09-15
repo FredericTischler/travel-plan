@@ -38,26 +38,26 @@ services:
       # (postgres_databases / postgres_app_users : payment_db / payment_user).
       DB_NAME: "payment_db"
       DB_USERNAME: "payment_user"
-      # --- DETTE TECHNIQUE ASSUMEE : mot de passe DB -----------------------
-      # Le .env genere par le role postgres ne porte QUE POSTGRES_SUPERUSER_PASSWORD
-      # (secret superuser de provisioning), PAS le mot de passe du compte applicatif
-      # payment_user. Le mecanisme .env n'est donc PAS reutilisable tel quel ici.
-      # On interpole PAYMENT_DB_PASSWORD (a alimenter via .env/Vault en prod, comme
-      # le fait le role postgres pour son superuser) avec, en FALLBACK dev, le meme
-      # placeholder "changeme_*" que le role postgres embarque dans ses defaults
-      # (postgres_app_users[payment_user].password = changeme_payment_user).
-      # => runnable out-of-the-box pour la preuve ; a surcharger via Vault en prod.
-      DB_PASSWORD: "${PAYMENT_DB_PASSWORD:-changeme_payment_user}"
+      # --- Mot de passe DB : FAIL-FAST, aucun fallback ---------------------
+      # PAYMENT_DB_PASSWORD est alimente par /opt/travel-plan/.env, rendu depuis
+      # Vault (secret/payment/db, cle `password`) par le role Ansible app-secrets.
+      # `:?` et PAS `:-changeme_payment_user` : un fallback fournirait TOUJOURS une
+      # valeur non-vide au conteneur, ce qui neutralise le fail-fast de
+      # application.yml et cree un mismatch SILENCIEUX si le compte payment_user a
+      # ete provisionne avec un autre secret (echec d'auth au runtime, pas au
+      # parsing). Meme idiome que NEO4J_PASSWORD cote travel-service.
+      DB_PASSWORD: "${PAYMENT_DB_PASSWORD:?set via env/Vault}"
       # --- Cle de signature JWT (PARTAGEE avec identity-service) -----------
       # CONTRAIREMENT a DB_PASSWORD ci-dessus (propre a ce service), cette
       # valeur DOIT etre IDENTIQUE a JWT_SIGNING_KEY dans
       # identity-service/docker-compose.identity.yml : payment-service ne fait
       # que VERIFIER des jetons HS256 emis par identity-service, jamais n'en
       # emet lui-meme, et HS256 exige le meme secret cote emetteur et cote
-      # verificateur. Meme valeur de TEST en dur que cote identity (>= 32
-      # octets, exige par jjwt/HS256, RFC 7518 §3.2) ; meme dette technique
-      # assumee (pas de cablage Vault a ce stade).
-      JWT_SIGNING_KEY: "dev-insecure-jwt-signing-key-change-me-0123456789ABCDEF"
+      # verificateur (>= 32 octets, exige par jjwt/HS256, RFC 7518 §3.2).
+      # Source unique : secret/shared/jwt (cle `signing_key`) -> .env rendu par
+      # le role app-secrets. `:?` garantit que les trois services echouent
+      # IDENTIQUEMENT au parsing si la cle manque, plutot que de diverger.
+      JWT_SIGNING_KEY: "${JWT_SIGNING_KEY:?set via env/Vault}"
     networks:
       - data-net
       - backend-net

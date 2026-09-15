@@ -94,21 +94,43 @@ vault_secrets:
       password: "changeme_neo4j"   # noqa: injecte par Vault en prod
       host: "neo4j"
       port: "7687"
+  # Secret PARTAGE (perimetre `shared/`) : cle de signature HS256 des JWT.
+  # HS256 exige le MEME secret chez l'emetteur (identity) et chez les
+  # verificateurs (payment, travel) : ce n'est donc pas un secret par service,
+  # d'ou un perimetre `shared/` distinct, lisible par les trois policies.
+  # La valeur reprend a l'identique celle qui etait en dur dans les fragments
+  # Compose : seul son EMPLACEMENT change, pas le comportement par defaut.
+  # >= 32 octets, exige par jjwt/HS256 (RFC 7518 §3.2).
+  - path: "shared/jwt"
+    data:
+      signing_key: "dev-insecure-jwt-signing-key-change-me-0123456789ABCDEF"  # noqa: injecte par Vault en prod
 
 # --- Policies PAR SERVICE (moindre privilege, cf. docs §5) -------------------
 # ATTENTION KV v2 : les capacites ACL visent secret/data/<svc>/* ET
 # secret/metadata/<svc>/* (PAS secret/<svc>/*). Aucune policy ne lit le
 # perimetre d'une autre.
+#
+# EXCEPTION ASSUMEE — perimetre `shared/` : la cle de signature HS256 est par
+# nature commune a l'emetteur (identity) et aux verificateurs (payment, travel).
+# Les trois policies le lisent donc en LECTURE SEULE. Ce n'est pas une brique
+# de cloisonnement en moins : chaque service reste incapable de lire le
+# perimetre d'un AUTRE service (identity/*, payment/*, travel/*).
 vault_policies:
   - name: "identity-policy"
     paths:
       "secret/data/identity/*": ["read"]
       "secret/metadata/identity/*": ["read", "list"]
+      "secret/data/shared/*": ["read"]
+      "secret/metadata/shared/*": ["read", "list"]
   - name: "payment-policy"
     paths:
       "secret/data/payment/*": ["read"]
       "secret/metadata/payment/*": ["read", "list"]
+      "secret/data/shared/*": ["read"]
+      "secret/metadata/shared/*": ["read", "list"]
   - name: "travel-policy"
     paths:
       "secret/data/travel/*": ["read"]
       "secret/metadata/travel/*": ["read", "list"]
+      "secret/data/shared/*": ["read"]
+      "secret/metadata/shared/*": ["read", "list"]

@@ -7,40 +7,15 @@
 # les modules community.postgresql (idempotents).
 
 # --------------------------------------------------------------------------
-# LECTURE VAULT — compose_fragment (conditionnel)
-# CHEMIN NON COUVERT PAR MOLECULE : postgres_vault_read: false par defaut
-# skipe ces taches en Molecule. Non-regression = re-jouer la sequence manuelle
-# apres toute modification de cette logique.
+# RENDU DU .env : DEPLACE dans le role `app-secrets`.
+# Ce role NE POSSEDE PLUS /opt/travel-plan/.env. Raison : ce fichier est unique
+# et rendu integralement par un `template` ; s'il etait templatte par plusieurs
+# roles (postgres pour le superuser, un autre pour payment/travel/JWT), chaque
+# run ecraserait le rendu du precedent => `changed` systematique, idempotence
+# violee. Un fichier, un proprietaire : voir roles/app-secrets.
+# La lecture Vault ci-dessous (tag `provision`) RESTE ici : elle sert les
+# besoins propres de provisioning de postgres (comptes + bases), pas le .env.
 # --------------------------------------------------------------------------
-- name: "Read postgres superuser secret from Vault (postgres_vault_read=true seulement)"
-  community.hashi_vault.vault_kv2_get:
-    url: "{{ vault_addr }}"
-    auth_method: token
-    token: "{{ vault_dev_root_token }}"
-    engine_mount_point: "{{ vault_kv_mount }}"
-    path: "infra/postgres-superuser"
-  register: _vault_pg_super
-  no_log: true
-  when: postgres_vault_read | bool
-  tags: [compose_fragment]
-
-- name: "Set postgres_superuser_password from Vault secret"
-  ansible.builtin.set_fact:
-    postgres_superuser_password: "{{ _vault_pg_super.secret.password }}"
-  no_log: true
-  when: postgres_vault_read | bool
-  tags: [compose_fragment]
-
-- name: "Write Vault secret to .env (Docker Compose le resout au up, pas bake dans le YAML)"
-  ansible.builtin.template:
-    src: "dotenv.j2"
-    dest: "{{ postgres_runtime_env_path }}"
-    mode: "0600"
-    owner: "{{ postgres_env_owner }}"
-    group: "{{ postgres_env_owner }}"
-  no_log: true
-  when: postgres_vault_read | bool
-  tags: [compose_fragment]
 
 # --------------------------------------------------------------------------
 # 1) Rendu du fragment de service Compose (templating pur, inoffensif)

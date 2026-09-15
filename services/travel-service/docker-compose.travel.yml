@@ -72,10 +72,13 @@ services:
       # identity-service/docker-compose.identity.yml : travel-service ne fait
       # que VERIFIER des jetons HS256 emis par identity-service, jamais n'en
       # emet lui-meme, et HS256 exige le meme secret cote emetteur et cote
-      # verificateur. Meme valeur de TEST en dur que cote identity (>= 32
-      # octets, exige par jjwt/HS256, RFC 7518 §3.2) ; meme dette technique
-      # assumee (pas de cablage Vault a ce stade).
-      JWT_SIGNING_KEY: "dev-insecure-jwt-signing-key-change-me-0123456789ABCDEF"
+      # verificateur (>= 32 octets, exige par jjwt/HS256, RFC 7518 §3.2).
+      # Source unique : secret/shared/jwt (cle `signing_key`) -> .env rendu par
+      # le role Ansible app-secrets. Meme idiome fail-fast `:?` que
+      # NEO4J_PASSWORD ci-dessus : si la cle manque, les trois fragments
+      # (identity, payment, travel) echouent IDENTIQUEMENT au parsing d'une
+      # seule invocation `docker compose`, jamais en divergeant silencieusement.
+      JWT_SIGNING_KEY: "${JWT_SIGNING_KEY:?set via env/Vault}"
     networks:
       - data-net
       - backend-net

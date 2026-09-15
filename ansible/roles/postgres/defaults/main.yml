@@ -56,25 +56,44 @@ postgres_app_users:
 # Ne pas ajouter d'extension "au cas ou".
 postgres_extensions: []
 
-# --- Integration Vault (lecture des secrets au rendu / provisioning) --------
-# postgres_vault_read: false (defaut) => Molecule-safe, aucune lecture Vault.
-# postgres_vault_read: true  => lecture depuis Vault (run reel, passer via -e).
-postgres_vault_read: false
+# --- Integration Vault (lecture des secrets pour le provisioning) -----------
+# postgres_vault_read: false => Molecule-safe, aucune lecture Vault : le bloc
+#   `provision` se connecte avec les placeholders de ce fichier.
+# postgres_vault_read: true  => lecture depuis Vault (run reel).
+#
+# (a) POURQUOI CE COUPLAGE A app_secrets_vault_read.
+#     Les deux roles doivent lire Vault ENSEMBLE ou PAS DU TOUT. Le role
+#     app-secrets rend /opt/travel-plan/.env, qui fournit
+#     POSTGRES_SUPERUSER_PASSWORD au conteneur Postgres lui-meme
+#     (templates/compose.postgres.yml.j2 : `${POSTGRES_SUPERUSER_PASSWORD:?...}`).
+#     Ce role, lui, utilise postgres_superuser_password pour SE CONNECTER en
+#     superuser pendant le provisioning. Si app_secrets_vault_read=true sans
+#     postgres_vault_read=true, le conteneur demarre avec le VRAI mot de passe
+#     Vault tandis que le provisioning tente le placeholder
+#     `changeme_postgres_superuser` => echec d'authentification immediat sur tout
+#     le bloc `provision`. Le meme decalage desynchronise silencieusement
+#     identity_user / payment_user (defaults ci-dessus vs Vault identity/db,
+#     payment/db). D'ou la derivation par defaut ci-dessous : un seul nom de flag
+#     canonique (app_secrets_vault_read) honore par les deux roles.
+#
+# (b) POURQUOI CA RESTE MOLECULE-SAFE.
+#     Quand le role postgres est joue SEUL (Molecule, roles/postgres/test-local.yml),
+#     app_secrets_vault_read n'est pas definie => default(false) => postgres_vault_read
+#     reste false. Comportement par defaut strictement inchange, aucune lecture Vault.
+#
+# (c) DECOUPLAGE DELIBERE TOUJOURS POSSIBLE.
+#     Un operateur peut surcharger explicitement `-e postgres_vault_read=false`
+#     (ou `=true`) pour dissocier volontairement les deux roles. C'est alors un
+#     choix explicite et trace en ligne de commande, plus un oubli silencieux.
+postgres_vault_read: "{{ app_secrets_vault_read | default(false) }}"
 
-# Chemin du .env Docker Compose genere par Ansible avec le secret superuser.
-# Doit etre dans le meme repertoire que docker-compose.yml (auto-charge par Compose).
-# Ne commiter JAMAIS ce fichier (.gitignore).
-postgres_runtime_env_path: "/opt/travel-plan/.env"
+# NOTE : le rendu de /opt/travel-plan/.env N'APPARTIENT PLUS a ce role
+# (migre vers roles/app-secrets, proprietaire unique de ce fichier). Les
+# variables postgres_runtime_env_path / postgres_env_owner ont donc disparu :
+# leur equivalent est app_secrets_runtime_env_path / app_secrets_env_owner.
 
 # Variables Vault pour le run reel (ignorees quand postgres_vault_read: false).
 # A surcharger via -e en prod. Coherentes avec vault/defaults/main.yml.
 vault_addr: "http://localhost:8200"
 vault_kv_mount: "secret"
 vault_dev_root_token: "changeme_vault_root_token"  # noqa: surcharger via ansible-vault
-
-# Proprietaire du .env genere (lu par Docker Compose, qui tourne en tant qu'utilisateur
-# normal — pas root). Utilise lookup('env', ...) pour ne PAS dependre de gather_facts :
-# ansible_env et ansible_user_id sont des facts indisponibles si gather_facts: false.
-# SUDO_USER (vide si pas de sudo) -> USER (toujours present en shell Linux/macOS).
-# Le second argument `true` de default() traite la chaine vide comme "non defini".
-postgres_env_owner: "{{ lookup('env', 'SUDO_USER') | default(lookup('env', 'USER'), true) }}"
