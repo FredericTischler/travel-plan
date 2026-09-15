@@ -1,5 +1,6 @@
 package com.travelplan.payment.service;
 
+import com.travelplan.payment.exception.InsufficientRoleException;
 import com.travelplan.payment.exception.InvalidTokenException;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -13,16 +14,24 @@ import org.springframework.stereotype.Service;
  * either), minus the final step: identity-service additionally looks up the
  * token's subject against its own user table, but payment-service has no
  * access to identity-service's database, so it stops at signature +
- * expiration validation. That is sufficient here — this service only needs
- * to know "is this a token identity-service really issued and is it still
- * valid", not who the caller is — except for the one narrow case below,
- * where the subject IS read to scope a service-to-service token to a single
- * endpoint.
+ * expiration validation, plus (new) an explicit role check — see
+ * {@link #requireAdminRole}. That is sufficient here — this service only
+ * needs to know "is this a token identity-service really issued, is it still
+ * valid, and does it carry the ADMIN role", not who the caller is — except
+ * for the one narrow case below, where the subject IS read to scope a
+ * service-to-service token to a single endpoint. The service-to-service
+ * token (subject {@code service:identity}) never carries a role claim
+ * (identity-service's {@code JwtService.generateServiceToken()} does not set
+ * one — it is an internal system call, not a user action) and is
+ * intentionally exempt from the role check: it is already scoped to a single
+ * endpoint by subject, see {@link #requireUserOrServiceToken}.
  */
 @Service
 public class TokenValidationService {
 
     private static final String BEARER_PREFIX = "Bearer ";
+    private static final String CLAIM_ROLE = "role";
+    private static final String ROLE_ADMIN = "ADMIN";
 
     /**
      * Subject identity-service mints for the one service-to-service token it
@@ -51,12 +60,15 @@ public class TokenValidationService {
      * @throws InvalidTokenException if the header is absent, not a
      *         {@code Bearer} value, the token fails signature/expiration
      *         validation, or the token is the service-to-service token
+     * @throws InsufficientRoleException if the token is otherwise valid but
+     *         does not carry the {@code ADMIN} role claim
      */
     public void requireValidToken(String authorizationHeader) {
         Claims claims = validateAndParse(authorizationHeader);
         if (SERVICE_IDENTITY_SUBJECT.equals(claims.getSubject())) {
             throw new InvalidTokenException();
         }
+        requireAdminRole(claims);
     }
 
     /**
@@ -71,9 +83,21 @@ public class TokenValidationService {
      * @throws InvalidTokenException if the header is absent, not a
      *         {@code Bearer} value, or the token fails signature/expiration
      *         validation
+     * @throws InsufficientRoleException if the token is a normal user token
+     *         (not the service-to-service token) and does not carry the
+     *         {@code ADMIN} role claim
      */
     public void requireUserOrServiceToken(String authorizationHeader) {
-        validateAndParse(authorizationHeader);
+        Claims claims = validateAndParse(authorizationHeader);
+        if (!SERVICE_IDENTITY_SUBJECT.equals(claims.getSubject())) {
+            requireAdminRole(claims);
+        }
+    }
+
+    private void requireAdminRole(Claims claims) {
+        if (!ROLE_ADMIN.equals(claims.get(CLAIM_ROLE, String.class))) {
+            throw new InsufficientRoleException();
+        }
     }
 
     private Claims validateAndParse(String authorizationHeader) {

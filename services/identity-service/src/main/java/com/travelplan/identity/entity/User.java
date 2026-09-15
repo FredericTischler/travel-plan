@@ -42,6 +42,15 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
+    /**
+     * Single-role authorization field (see V3__add_role.sql). This is an
+     * Admin Dashboard: every account created today is an administrator, so
+     * every {@link User} is constructed with {@code "ADMIN"} — no role
+     * hierarchy, no setter, not settable through any API request.
+     */
+    @Column(name = "role", nullable = false)
+    private String role;
+
     protected User() {
         // required by JPA
     }
@@ -50,6 +59,7 @@ public class User {
         this.email = email;
         this.passwordHash = passwordHash;
         this.createdAt = OffsetDateTime.now();
+        this.role = "ADMIN";
     }
 
     public UUID getId() {
@@ -78,5 +88,9 @@ public class User {
 
     public String getPasswordHash() {
         return passwordHash;
+    }
+
+    public String getRole() {
+        return role;
     }
 }

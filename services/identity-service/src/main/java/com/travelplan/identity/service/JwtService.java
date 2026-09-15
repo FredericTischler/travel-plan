@@ -35,14 +35,24 @@ import java.util.Date;
  * model already used elsewhere). This mirrors the Neo4j Vault wiring deferred
  * in Phase 1: an explicit, assumed gap, not a silent shortcut.</p>
  *
- * <p>No refresh token, no revocation/blacklist, no roles/permissions in the
- * token — out of scope for this increment.</p>
+ * <p>No refresh token, no revocation/blacklist — out of scope for this
+ * increment. The token does carry a single {@code role} claim (see
+ * {@link #CLAIM_ROLE}): every account is {@code ADMIN} today (single-role
+ * Admin Dashboard, no hierarchy — see {@code User.role}), but every protected
+ * endpoint now checks this claim explicitly instead of merely trusting token
+ * validity, per the least-privilege requirement in docs/sujet.md §4.</p>
  */
 @Service
 public class JwtService {
 
     private static final Duration TOKEN_VALIDITY = Duration.ofMinutes(15);
     private static final String CLAIM_EMAIL = "email";
+
+    /** Name of the role claim carried by every user token (see {@link #generateToken}). */
+    public static final String CLAIM_ROLE = "role";
+
+    /** The single role this system grants today — see {@code User.role} javadoc. */
+    public static final String ROLE_ADMIN = "ADMIN";
 
     /**
      * Subject of the service-to-service token minted by
@@ -72,13 +82,15 @@ public class JwtService {
 
     /**
      * Issue a short-lived (15 min) token for a successfully authenticated user.
-     * Subject = user id, single custom claim = email. No refresh token.
+     * Subject = user id, claims = email and role ({@link #CLAIM_ROLE}, taken
+     * verbatim from {@link User#getRole()}). No refresh token.
      */
     public String generateToken(User user) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .subject(user.getId().toString())
                 .claim(CLAIM_EMAIL, user.getEmail())
+                .claim(CLAIM_ROLE, user.getRole())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(TOKEN_VALIDITY)))
                 .signWith(signingKey, Jwts.SIG.HS256)

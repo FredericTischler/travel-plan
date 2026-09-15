@@ -34,11 +34,14 @@ import java.util.UUID;
  * {@code POST /users} stays public: it is the only way to create the very
  * first account, so requiring a token here would be a chicken-and-egg
  * problem. {@code GET /users}, {@code GET /users/{id}},
- * {@code DELETE /users/{id}} and {@code PATCH /users/{id}} all require a
- * valid Bearer token: the list and the detail endpoint expose the same PII
- * (email), and delete/update are destructive or PII-modifying operations, so
- * leaving either open while protecting the list would just relocate the same
- * vulnerability rather than close it.
+ * {@code DELETE /users/{id}} and {@code PATCH /users/{id}} all require the
+ * caller to be an administrator ({@link AuthService#requireAdmin}, 403 if the
+ * token is valid but lacks the {@code ADMIN} role claim, 401 if the token
+ * itself is missing/invalid — see docs/sujet.md §4 on least privilege): the
+ * list and the detail endpoint expose the same PII (email), and delete/update
+ * are destructive or PII-modifying operations, so leaving either open while
+ * protecting the list would just relocate the same vulnerability rather than
+ * close it.
  */
 @RestController
 @RequestMapping("/users")
@@ -68,34 +71,36 @@ public class UserController {
     }
 
     /**
-     * Get an active user by id. Requires a valid Bearer token — see class-level note.
+     * Get an active user by id. Requires the caller to be an administrator — see class-level note.
      *
      * @return 200 with the user, 404 if absent or soft-deleted, 401 with a
-     *         generic message if the Authorization header is missing/invalid/expired
+     *         generic message if the Authorization header is missing/invalid/expired,
+     *         403 if the token is valid but does not carry the ADMIN role
      */
     @GetMapping("/{id}")
     public ResponseEntity<UserResponse> getById(
             @PathVariable UUID id,
             @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
-        authService.getCurrentUser(authorizationHeader);
+        authService.requireAdmin(authorizationHeader);
         return ResponseEntity.ok(userService.findById(id));
     }
 
     /**
-     * List all active users. Requires a valid Bearer token — see class-level note.
+     * List all active users. Requires the caller to be an administrator — see class-level note.
      *
-     * @return 200 with the list (empty list if none), 401 with a generic
-     *         message if the Authorization header is missing/invalid/expired
+     * @return 200 with the list (empty list if none), 401 with a generic message if the
+     *         Authorization header is missing/invalid/expired, 403 if the token
+     *         is valid but does not carry the ADMIN role
      */
     @GetMapping
     public ResponseEntity<List<UserResponse>> getAll(
             @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
-        authService.getCurrentUser(authorizationHeader);
+        authService.requireAdmin(authorizationHeader);
         return ResponseEntity.ok(userService.findAll());
     }
 
     /**
-     * Soft-delete an active user. Requires a valid Bearer token — see class-level note.
+     * Soft-delete an active user. Requires the caller to be an administrator — see class-level note.
      *
      * <p>After the user is soft-deleted, cascades the deletion to that user's
      * payments in payment-service via {@link PaymentServiceClient}. This call
@@ -107,34 +112,36 @@ public class UserController {
      *
      * @return 204 No Content on success, 404 if absent or already soft-deleted,
      *         401 with a generic message if the Authorization header is
-     *         missing/invalid/expired
+     *         missing/invalid/expired, 403 if the token is valid but does not
+     *         carry the ADMIN role
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(
             @PathVariable UUID id,
             @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
-        authService.getCurrentUser(authorizationHeader);
+        authService.requireAdmin(authorizationHeader);
         userService.delete(id);
         paymentServiceClient.deleteAllPaymentsForUser(id);
         return ResponseEntity.noContent().build();
     }
 
     /**
-     * Update the email address of an active user. Requires a valid Bearer
-     * token — see class-level note. No other field can be changed through
+     * Update the email address of an active user. Requires the caller to be an
+     * administrator — see class-level note. No other field can be changed through
      * this endpoint.
      *
      * @return 200 with the updated user, 404 if absent or soft-deleted, 409
      *         if the new email is already active on another user, 400 if the
      *         request body fails validation, 401 with a generic message if
-     *         the Authorization header is missing/invalid/expired
+     *         the Authorization header is missing/invalid/expired, 403 if the
+     *         token is valid but does not carry the ADMIN role
      */
     @PatchMapping("/{id}")
     public ResponseEntity<UserResponse> updateEmail(
             @PathVariable UUID id,
             @Valid @RequestBody UpdateEmailRequest request,
             @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
-        authService.getCurrentUser(authorizationHeader);
+        authService.requireAdmin(authorizationHeader);
         return ResponseEntity.ok(userService.updateEmail(id, request));
     }
 }

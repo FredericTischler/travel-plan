@@ -1,5 +1,7 @@
 package com.travelplan.identity;
 
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -16,18 +18,25 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Integration tests for the two fixes applied to the user resource:
+ * Integration tests for the fixes applied to the user resource:
  *
  * <ul>
  *   <li>{@code GET /users} (and the other previously-open routes) now require
- *       a valid Bearer token, using the exact same manual validation
- *       mechanism as {@code GET /me} (see UserController / AuthController).</li>
+ *       the caller to be an administrator (see {@code AuthService#requireAdmin}):
+ *       a valid token whose subject maps to an active user AND whose
+ *       {@code role} claim is {@code ADMIN} (docs/sujet.md §4, least
+ *       privilege — enforcement, not just authentication).</li>
  *   <li>CORS is wired for the admin dashboard's origins (see CorsConfig),
  *       verified here via a preflight (OPTIONS) request.</li>
  * </ul>
@@ -142,5 +151,64 @@ class UsersAuthorizationIntegrationTest {
                 "/users", HttpMethod.OPTIONS, new HttpEntity<>(headers), Void.class);
 
         assertThat(response.getHeaders().getAccessControlAllowOrigin()).isNull();
+    }
+
+    @Test
+    void getUsersWithATokenCarryingNoRoleClaimReturns403() {
+        String email = "no-role-claim@example.com";
+        ResponseEntity<Map> createResponse = restTemplate.postForEntity(
+                "/users", Map.of("email", email, "password", "secret123"), Map.class);
+        String userId = (String) createResponse.getBody().get("id");
+
+        // Same subject as a real active user, same signing key, valid
+        // signature and expiration — but no "role" claim at all. Simulates a
+        // pre-least-privilege token or a forged one missing the claim.
+        String tokenWithoutRole = signToken(userId, null);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Bearer " + tokenWithoutRole);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                "/users", HttpMethod.GET, new HttpEntity<>(headers), Map.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+        assertThat(response.getBody()).containsEntry("error", "Administrator role required");
+    }
+
+    @Test
+    void getUsersWithATokenCarryingTheAdminRoleClaimReturns200() {
+        String email = "role-admin-claim@example.com";
+        String password = "secret123";
+        restTemplate.postForEntity("/users", Map.of("email", email, "password", password), Map.class);
+
+        ResponseEntity<Map> loginResponse = restTemplate.postForEntity(
+                "/login", Map.of("email", email, "password", password), Map.class);
+        String token = (String) loginResponse.getBody().get("token");
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Authorization", "Bearer " + token);
+        ResponseEntity<List> response = restTemplate.exchange(
+                "/users", HttpMethod.GET, new HttpEntity<>(headers), List.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    /**
+     * Signs a token with the exact same key/algorithm as the application
+     * under test (see {@code JWT_SIGNING_KEY} above), with full control over
+     * the {@code role} claim — used to prove the role check is enforced
+     * independently from mere signature/subject validity.
+     */
+    private static String signToken(String subject, String role) {
+        SecretKey key = Keys.hmacShaKeyFor(
+                "test-only-signing-key-must-be-at-least-32-bytes-long".getBytes(StandardCharsets.UTF_8));
+        Instant now = Instant.now();
+        var builder = Jwts.builder()
+                .subject(subject)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plus(Duration.ofMinutes(15))));
+        if (role != null) {
+            builder.claim("role", role);
+        }
+        return builder.signWith(key, Jwts.SIG.HS256).compact();
     }
 }

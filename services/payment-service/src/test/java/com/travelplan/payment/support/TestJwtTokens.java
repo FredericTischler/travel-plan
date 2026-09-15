@@ -16,8 +16,8 @@ import java.util.UUID;
  * Signs tokens with {@link #SIGNING_KEY}, the same secret every test class
  * registers as {@code JWT_SIGNING_KEY} via {@code @DynamicPropertySource}.
  * This mirrors identity-service's own {@code JwtService} (HS256, subject =
- * user id, short expiration) closely enough to exercise
- * {@code TokenValidationService}'s real signature + expiration checks
+ * user id, {@code role} claim, short expiration) closely enough to exercise
+ * {@code TokenValidationService}'s real signature + expiration + role checks
  * end-to-end, without needing identity-service running anywhere in these
  * tests.
  */
@@ -31,10 +31,28 @@ public final class TestJwtTokens {
 
     /**
      * A freshly-signed, currently-valid token (15 min validity, arbitrary
-     * random subject — payment-service's TokenValidationService never reads
-     * the subject, only signature and expiration).
+     * random subject, {@code role=ADMIN} claim — mirrors every account
+     * issued by identity-service today).
      */
     public static String validToken() {
+        SecretKey key = Keys.hmacShaKeyFor(SIGNING_KEY.getBytes(StandardCharsets.UTF_8));
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject(UUID.randomUUID().toString())
+                .claim("role", "ADMIN")
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plus(Duration.ofMinutes(15))))
+                .signWith(key, Jwts.SIG.HS256)
+                .compact();
+    }
+
+    /**
+     * A freshly-signed, currently-valid token with no {@code role} claim at
+     * all — exercises {@code TokenValidationService}'s least-privilege
+     * rejection (403) of an otherwise-valid token that simply never claims
+     * the ADMIN role.
+     */
+    public static String validTokenWithoutRole() {
         SecretKey key = Keys.hmacShaKeyFor(SIGNING_KEY.getBytes(StandardCharsets.UTF_8));
         Instant now = Instant.now();
         return Jwts.builder()

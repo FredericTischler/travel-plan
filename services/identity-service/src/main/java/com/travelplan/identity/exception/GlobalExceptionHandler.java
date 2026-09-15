@@ -43,6 +43,11 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.UNAUTHORIZED, ex.getMessage());
     }
 
+    @ExceptionHandler(InsufficientRoleException.class)
+    public ResponseEntity<Map<String, Object>> handleInsufficientRole(InsufficientRoleException ex) {
+        return buildResponse(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
         String detail = ex.getBindingResult().getFieldErrors().stream()
