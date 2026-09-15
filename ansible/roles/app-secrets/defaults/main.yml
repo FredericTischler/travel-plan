@@ -57,11 +57,19 @@ app_secrets_env_owner: "{{ lookup('env', 'SUDO_USER') | default(lookup('env', 'U
 # infra/postgres-superuser -> password    (secret d'administration Postgres)
 # identity/db              -> password    (compte applicatif identity_user)
 # payment/db               -> password    (compte applicatif payment_user)
+# payment/stripe           -> api_key, secret_key      (credentials Stripe)
+# payment/paypal           -> client_id, client_secret (credentials PayPal)
 # travel/db                -> password    (compte admin Neo4j, unique en CE)
 # shared/jwt               -> signing_key (cle HS256 PARTAGEE identity/payment/travel)
+#
+# NOTE payment/stripe et payment/paypal portent DEUX cles chacun : un seul
+# chemin Vault alimente donc deux facts (et deux lignes de .env). Les NOMS de
+# cles sont ceux ecrits par roles/vault/defaults/main.yml — ne pas les deviner.
 app_secrets_vault_path_postgres_superuser: "infra/postgres-superuser"
 app_secrets_vault_path_identity_db: "identity/db"
 app_secrets_vault_path_payment_db: "payment/db"
+app_secrets_vault_path_payment_stripe: "payment/stripe"
+app_secrets_vault_path_payment_paypal: "payment/paypal"
 app_secrets_vault_path_travel_db: "travel/db"
 app_secrets_vault_path_shared_jwt: "shared/jwt"
 

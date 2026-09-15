@@ -255,7 +255,10 @@ donc ajouter à l'addition :
 **Total réaliste : ~6,5–7 Go occupés *avant tout scale*** → le modèle « toute la stack up
 en permanence pendant que je code » est **intenable**. D'où la décision profils Compose
 ci-dessous. L'addition confirme aussi que la stack CI (Jenkins ~700 Mo + SonarQube ~1,5 Go)
-**ne peut pas** coexister (§8), et que 1 réplica par défaut est obligatoire (plus bas).
+**ne peut pas** coexister (§8), et que ~~1 réplica par défaut est obligatoire~~ le nombre de
+réplicas doit rester **réglable** (plus bas) : le défaut est passé à **2 réplicas** par service
+applicatif (~+850 Mo mesurés pour les trois), redescendable à 1 via `*_REPLICAS=1` sur un poste
+qui ne suit pas — sans éditer les fragments Compose.
 
 **Décision critique — `-Xmx` fixé explicitement sur CHAQUE JVM.** Par défaut, une JVM
 moderne réserve **25 % de la RAM hôte** (`MaxRAMPercentage`) comme heap **si aucune limite
@@ -322,8 +325,18 @@ data-net      : identity ⇄ postgres | payment ⇄ postgres | travel ⇄ neo4j 
   les nouvelles instances entrent dans le pool **sans reconfiguration**.
 - **Failover** : Traefik retire une instance morte du pool (healthcheck). Si une réplique
   tombe, le trafic part vers les autres.
-- **Réglage 8 Go** : **1 réplica par défaut** partout ; on ne maintient pas N réplicas en
-  permanence, la RAM ne suit pas.
+- **Réglage 8 Go** : ~~**1 réplica par défaut** partout ; on ne maintient pas N réplicas en
+  permanence, la RAM ne suit pas.~~
+  **RÉVISÉ (implémentation)** : les trois services applicatifs portent désormais
+  `deploy.replicas` à **2 par défaut**. Le prérequis a été levé : le `container_name`
+  fixe (`travel-plan-identity`/`-payment`/`-travel`) a été **retiré** des trois
+  fragments — il est unique par daemon Docker et interdisait structurellement toute
+  2ᵉ instance. Coût mesuré : ~280 Mo par réplica JVM, soit ~+850 Mo pour passer les
+  trois services de 1 à 2. Reste tenable, mais le budget 8 Go n'est plus confortable
+  avec `full` + Neo4j : le nombre de réplicas est donc **interpolé**
+  (`IDENTITY_REPLICAS` / `PAYMENT_REPLICAS` / `TRAVEL_REPLICAS`), permettant de
+  redescendre à 1 sans éditer les fragments. Le mécanisme est en place par défaut ;
+  le réglage reste une variable d'exploitation, pas une réécriture.
 - **Démo failover (stratégie Linux natif 8 Go)** : profil **`full`**, **IDE fermé**, scaler
   **UN SEUL** service à **2** (pas 3), puis couper une instance pour montrer le report de
   trafic. Le **swap** sert de filet sur les pics. **À répéter avant le jour J** pour
@@ -332,6 +345,16 @@ data-net      : identity ⇄ postgres | payment ⇄ postgres | travel ⇄ neo4j 
 - **Tradeoff / sacrifice** : ce n'est pas de la haute dispo réelle 24/7. On sacrifie le « always-on
   multi-réplica » faute de RAM ; on garde la **démontrabilité** du mécanisme. Honnête vis-à-vis
   de la grille : le mécanisme existe et se prouve, il n'est juste pas dimensionné production.
+  **Mise à jour** : le multi-réplica est maintenant l'état *par défaut* (2 instances), plus
+  seulement « démontrable ». Le sacrifice résiduel est plus étroit : pas de réplication des
+  **bases** (Postgres et Neo4j restent des singletons, donc SPOF de données), et le scaling
+  reste manuel — pas d'autoscaling, ce qui relèverait de K8s (hors périmètre, bonus séparé).
+- **Vérification empirique (faite, pas supposée)** : avec 2 réplicas `identity-service`,
+  40 requêtes via Traefik se répartissent quasi à parité entre les deux instances
+  (11 774 vs 11 914 octets reçus) ; instance n°2 arrêtée, **20/20** requêtes restent en
+  `200`. Round-robin et failover confirmés, sans aucune modification de la config Traefik :
+  le provider Docker agrège tous les conteneurs portant les mêmes labels
+  `traefik.http.services.<nom>.loadbalancer.*` dans un pool unique.
 
 ### Dette de test : ce budget est estimé, pas mesuré
 
@@ -466,7 +489,7 @@ centralisée et déléguée (la phrase de résilience de §1 est corrigée en co
 | Index unique partiel (unicité sous soft-delete) | Unicité applicative côté Neo4j ; discipline de schéma (`WHERE deleted_at IS NULL` sur les contraintes Postgres) |
 | ForwardAuth centralisé (identity) | `identity-service` = SPOF runtime ; validation JWT *stateless* au bord écartée (projet solo, surface admin-only) |
 | Profils Compose (`core` en dev quotidien) | Pas de stack complète testée en continu ; bascule de profil nécessaire |
-| Réplicas à 1 par défaut | Haute dispo permanente — mécanisme seulement démontrable |
+| ~~Réplicas à 1 par défaut~~ → **2 réplicas par défaut** sur les 3 services applicatifs | Plus le mécanisme lui-même (LB + failover actifs par défaut, prouvés) : restent la non-réplication des **bases** (Postgres/Neo4j singletons = SPOF de données) et le scaling **manuel**, sans autoscaling (relèverait de K8s) |
 | Vault dev mode + token bootstrap ansible-vault | Réalisme prod (persistance, auto-unseal, HA) |
 | TLS au bord seulement | mTLS interne (mitigé par segmentation réseau) |
 | Traefik comme gateway | Logique gateway Spring-native / agrégation BFF |

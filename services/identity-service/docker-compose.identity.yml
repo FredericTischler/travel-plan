@@ -22,8 +22,28 @@ services:
       context: .
       dockerfile: Dockerfile
     image: "travel-plan/identity-service:0.1.0"
-    container_name: "travel-plan-identity"
+    # PAS de `container_name` : DELIBERE, c'est le prerequis du multi-replica.
+    # Un container_name fixe est unique par daemon Docker => il rend
+    # STRUCTURELLEMENT impossible de faire tourner 2 instances du meme service
+    # (Docker refuse le doublon), et Compose rejette d'ailleurs explicitement la
+    # combinaison container_name + replicas > 1. On laisse donc Compose generer
+    # les noms (`travel-plan-identity-service-1`, `-2`, ...). Sujet §1 :
+    # « multiple replicas of each microservice for load balancing and failover ».
+    #
+    # Consequence : ne JAMAIS cibler ces conteneurs par un nom en dur dans un
+    # script. On adresse par NOM DE SERVICE Compose (`identity-service`), que le
+    # DNS interne Docker resout vers TOUTES les replicas en round-robin, ou via
+    # `docker compose ps/logs/exec identity-service`.
     restart: unless-stopped
+    # --- Replicas / load-balancing (sujet §1) -------------------------------
+    # Compose V2 honore `deploy.replicas` pour un simple `docker compose up`
+    # HORS Swarm (verifie sur la version embarquee de ce projet, cf. README).
+    # Valeur interpolee : `docker compose up` seul donne 2 instances, et un poste
+    # contraint en RAM peut redescendre a 1 via IDENTITY_REPLICAS=1 dans
+    # l'environnement, SANS editer ce fragment. `--scale identity-service=N`
+    # reste prioritaire sur cette valeur si on veut varier a la volee.
+    deploy:
+      replicas: ${IDENTITY_REPLICAS:-2}
     # Garde-fou RAM 8 Go (docs §4). Spring Boot + Hikari(5) + JVM : 512m confortable
     # (l'ENTRYPOINT fixe MaxRAMPercentage=75 => ~384m de heap max).
     mem_limit: "512m"
@@ -61,6 +81,13 @@ services:
       # apres un DELETE /users/{id} reussi. Nom de service Docker
       # `payment-service`, port INTERNE 8080, meme reseau backend-net que
       # identity-service (pas de Traefik/TLS pour cet appel interne).
+      #
+      # MULTI-REPLICA : c'est bien le NOM DE SERVICE Compose qui est utilise ici,
+      # PAS un container_name. Le DNS interne Docker resout un nom de service vers
+      # les IP de TOUTES ses replicas et fait du round-robin => cet appel
+      # inter-services est deja load-balance, sans changement, quand
+      # payment-service tourne a N > 1. Un container_name en dur ici aurait casse
+      # au premier scale (nom non resoluble car inexistant en N exemplaires).
       PAYMENT_SERVICE_URL: "http://payment-service:8080"
     networks:
       - data-net

@@ -88,6 +88,58 @@ absolu**, via des flags dans `compose-assembly/defaults/main.yml` :
 Les chemins (`assembly_*_fragment`) sont vides par défaut et doivent être fournis en
 `-e` : ils varient d'une machine à l'autre.
 
+### Réplicas & load balancing
+
+Les trois services applicatifs (`identity-service`, `payment-service`,
+`travel-service`) tournent à **2 réplicas par défaut** (sujet §1 : *« multiple
+replicas of each microservice for load balancing and failover mechanisms »*).
+
+**Prérequis : aucun `container_name` sur ces trois services.** Un `container_name`
+est unique par daemon Docker : il rend structurellement impossible de démarrer une
+2ᵉ instance, et Compose rejette explicitement `container_name` + `replicas > 1`.
+Les noms sont donc générés par Compose (`travel-plan-identity-service-1`, `-2`, …).
+Corollaire : **ne jamais cibler ces conteneurs par un nom en dur** dans un script —
+on adresse par **nom de service** (`docker compose logs identity-service`), jamais
+par nom de conteneur. Les conteneurs d'infra (`postgres`, `neo4j`, `vault`,
+`traefik`, `jenkins`) sont des singletons et gardent leur `container_name`.
+
+**Déclenchement.** `deploy.replicas` est honoré par un simple `docker compose up`
+**hors Swarm** avec le Compose V2 de ce projet (vérifié sur `Docker Compose version
+v5.5.1` : `docker compose up -d identity-service` crée bien 2 conteneurs). Sur une
+version de Compose plus ancienne qui ignorerait `deploy.replicas`, l'équivalent
+explicite est `docker compose up -d --scale identity-service=2 identity-service`.
+
+**Réglage RAM.** Le nombre de réplicas est interpolé, pas figé : sur un poste
+contraint, redescendre sans éditer les fragments via
+`IDENTITY_REPLICAS` / `PAYMENT_REPLICAS` / `TRAVEL_REPLICAS` (ex. `TRAVEL_REPLICAS=1`,
+`travel-service` étant adossé à Neo4j, le poste le plus lourd). `--scale` reste
+prioritaire sur ces valeurs.
+
+```bash
+# scale à la volée
+docker compose --profile full up -d --scale identity-service=3 identity-service
+# retour à 1 réplica
+docker compose --profile full up -d --scale identity-service=1 identity-service
+```
+
+**Load balancing.** Rien à configurer côté Traefik : le provider Docker agrège
+**tous** les conteneurs portant les mêmes labels
+`traefik.http.services.<nom>.loadbalancer.*` dans un seul pool de serveurs, et
+répartit en round-robin. Les nouvelles réplicas entrent dans le pool sans
+reconfiguration ni redémarrage de la gateway.
+
+**Appels inter-services.** `PAYMENT_SERVICE_URL` vaut `http://payment-service:8080`,
+soit le **nom de service** Compose : le DNS interne Docker le résout vers les IP de
+toutes les réplicas et alterne. Les appels internes sont donc load-balancés eux
+aussi, sans passer par Traefik.
+
+**Vérifié empiriquement** (2 réplicas `identity-service`, stack `full`) :
+- 40 requêtes via Traefik sur `https://identity.localhost/actuator/health` →
+  trafic réparti quasi à parité entre les deux instances (11 774 vs 11 914 octets
+  reçus) : round-robin effectif ;
+- instance n°2 arrêtée → **20/20** requêtes toujours en `200`, aucune erreur :
+  Traefik sort l'instance morte du pool (failover).
+
 ### Tests d'infrastructure
 
 | Rôle | Test |
@@ -309,9 +361,10 @@ attendent et qui est **absent ou partiel** dans le dépôt aujourd'hui.
   s'applique via son propre `test-local.yml` ou son scénario Molecule, et l'ordre
   d'application (rôles de service puis `compose-assembly`) est documenté en commentaire,
   pas automatisé.
-- **Pas de réplicas, pas de load balancing effectif, pas de failover.** Aucun
-  `deploy.replicas`, un seul conteneur par service. Traefik est capable d'équilibrer
-  (provider Docker, découverte par labels), mais aucun pool de réplicas n'existe.
+- ~~Pas de réplicas, pas de load balancing effectif, pas de failover.~~ **Corrigé** —
+  les trois services applicatifs tournent à **2 réplicas par défaut**, Traefik
+  équilibre le trafic entre elles et retire une instance morte du pool. Voir
+  [Réplicas & load balancing](#réplicas--load-balancing) pour le détail et la preuve.
 - **Pas de logging traçable inter-services.** Aucun `X-Request-Id`, aucune
   corrélation, aucun MDC, et ni Loki ni Promtail ne sont provisionnés — alors que la
   grille d'audit vérifie explicitement la traçabilité d'une requête à travers les

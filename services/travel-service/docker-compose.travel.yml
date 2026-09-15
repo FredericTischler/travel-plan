@@ -29,8 +29,23 @@ services:
       context: .
       dockerfile: Dockerfile
     image: "travel-plan/travel-service:0.1.0"
-    container_name: "travel-plan-travel"
+    # PAS de `container_name` : DELIBERE, c'est le prerequis du multi-replica.
+    # Un container_name fixe est unique par daemon Docker => il rend
+    # STRUCTURELLEMENT impossible de faire tourner 2 instances du meme service
+    # (Docker refuse le doublon), et Compose rejette d'ailleurs explicitement la
+    # combinaison container_name + replicas > 1. On laisse donc Compose generer
+    # les noms (`travel-plan-travel-service-1`, `-2`, ...). Sujet §1 :
+    # « multiple replicas of each microservice for load balancing and failover ».
     restart: unless-stopped
+    # --- Replicas / load-balancing (sujet §1) -------------------------------
+    # Compose V2 honore `deploy.replicas` pour un simple `docker compose up`
+    # HORS Swarm (verifie sur la version embarquee de ce projet, cf. README).
+    # ATTENTION RAM : chaque replica travel-service ouvre son propre pool de
+    # connexions Neo4j, et neo4j est deja le poste le plus lourd de la stack
+    # (~1 Go, docs §4). TRAVEL_REPLICAS=1 permet de redescendre a 1 sans editer
+    # ce fragment ; `--scale travel-service=N` reste prioritaire.
+    deploy:
+      replicas: ${TRAVEL_REPLICAS:-2}
     # Garde-fou RAM 8 Go (docs §4). Spring Boot + driver Neo4j + JVM : 512m
     # confortable (l'ENTRYPOINT fixe MaxRAMPercentage=75 => ~384m de heap max).
     mem_limit: "512m"

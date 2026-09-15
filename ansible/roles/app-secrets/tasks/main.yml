@@ -25,6 +25,8 @@
     - "{{ app_secrets_vault_path_postgres_superuser }}"
     - "{{ app_secrets_vault_path_identity_db }}"
     - "{{ app_secrets_vault_path_payment_db }}"
+    - "{{ app_secrets_vault_path_payment_stripe }}"
+    - "{{ app_secrets_vault_path_payment_paypal }}"
     - "{{ app_secrets_vault_path_travel_db }}"
     - "{{ app_secrets_vault_path_shared_jwt }}"
   register: _vault_app_secrets
@@ -50,6 +52,28 @@
       {{ _vault_app_secrets.results
          | selectattr('item', 'equalto', app_secrets_vault_path_payment_db)
          | map(attribute='secret.password')
+         | first }}
+    # payment/stripe et payment/paypal : UN chemin -> DEUX cles chacun.
+    # map(attribute='secret.<cle>') sur le MEME resultat de boucle.
+    app_secrets_stripe_api_key: >-
+      {{ _vault_app_secrets.results
+         | selectattr('item', 'equalto', app_secrets_vault_path_payment_stripe)
+         | map(attribute='secret.api_key')
+         | first }}
+    app_secrets_stripe_secret_key: >-
+      {{ _vault_app_secrets.results
+         | selectattr('item', 'equalto', app_secrets_vault_path_payment_stripe)
+         | map(attribute='secret.secret_key')
+         | first }}
+    app_secrets_paypal_client_id: >-
+      {{ _vault_app_secrets.results
+         | selectattr('item', 'equalto', app_secrets_vault_path_payment_paypal)
+         | map(attribute='secret.client_id')
+         | first }}
+    app_secrets_paypal_client_secret: >-
+      {{ _vault_app_secrets.results
+         | selectattr('item', 'equalto', app_secrets_vault_path_payment_paypal)
+         | map(attribute='secret.client_secret')
          | first }}
     app_secrets_neo4j_password: >-
       {{ _vault_app_secrets.results
