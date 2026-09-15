@@ -18,6 +18,7 @@ import org.testcontainers.containers.Neo4jContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -58,14 +59,31 @@ class DestinationLifecycleIntegrationTest {
 
     @Test
     void createReadUpdateThenSoftDelete() {
-        // Step 1 — POST /destinations -> 201 Created
-        Map<String, Object> createBody = Map.of("name", "Lisbon", "country", "Portugal");
+        // Step 1 — POST /destinations -> 201 Created, with dates, an activity and an accommodation
+        Map<String, Object> createBody = Map.of(
+                "name", "Lisbon", "country", "Portugal",
+                "startDate", "2026-06-01", "endDate", "2026-06-05",
+                "activities", List.of("Tram 28 ride", "Belem Tower"),
+                "accommodations", List.of(Map.of(
+                        "name", "Hotel Lisboa", "type", "HOTEL",
+                        "checkIn", "2026-06-01", "checkOut", "2026-06-05")));
         ResponseEntity<Map> createResponse = restTemplate.exchange(
                 "/destinations", HttpMethod.POST, authorizedJsonEntity(createBody), Map.class);
 
         assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(createResponse.getBody()).containsEntry("name", "Lisbon");
         assertThat(createResponse.getBody()).containsEntry("country", "Portugal");
+        assertThat(createResponse.getBody()).containsEntry("startDate", "2026-06-01");
+        assertThat(createResponse.getBody()).containsEntry("endDate", "2026-06-05");
+        assertThat(createResponse.getBody()).containsEntry("durationDays", 5);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> createdActivities = (List<Map<String, Object>>) createResponse.getBody().get("activities");
+        assertThat(createdActivities).hasSize(2);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> createdAccommodations =
+                (List<Map<String, Object>>) createResponse.getBody().get("accommodations");
+        assertThat(createdAccommodations).hasSize(1);
+        assertThat(createdAccommodations.get(0)).containsEntry("name", "Hotel Lisboa");
 
         String destinationId = (String) createResponse.getBody().get("id");
         UUID id = UUID.fromString(destinationId);
@@ -76,14 +94,31 @@ class DestinationLifecycleIntegrationTest {
         assertThat(getResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(getResponse.getBody()).containsEntry("name", "Lisbon");
         assertThat(getResponse.getBody()).containsEntry("country", "Portugal");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> readActivities = (List<Map<String, Object>>) getResponse.getBody().get("activities");
+        assertThat(readActivities).hasSize(2);
 
-        // Step 3 — PUT /destinations/{id} -> 200, fields replaced
+        // Step 3 — PUT /destinations/{id} -> 200, fields replaced, including a
+        // full replacement of the activity/accommodation lists
+        Map<String, Object> updateBody = Map.of(
+                "name", "Porto", "country", "Portugal",
+                "startDate", "2026-07-10", "endDate", "2026-07-12",
+                "activities", List.of("Port wine cellar tour"),
+                "accommodations", List.of());
         ResponseEntity<Map> updateResponse = restTemplate.exchange(
-                "/destinations/" + id, HttpMethod.PUT,
-                authorizedJsonEntity(Map.of("name", "Porto", "country", "Portugal")), Map.class);
+                "/destinations/" + id, HttpMethod.PUT, authorizedJsonEntity(updateBody), Map.class);
 
         assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(updateResponse.getBody()).containsEntry("name", "Porto");
+        assertThat(updateResponse.getBody()).containsEntry("durationDays", 3);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> updatedActivities = (List<Map<String, Object>>) updateResponse.getBody().get("activities");
+        assertThat(updatedActivities).hasSize(1);
+        assertThat(updatedActivities.get(0)).containsEntry("name", "Port wine cellar tour");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> updatedAccommodations =
+                (List<Map<String, Object>>) updateResponse.getBody().get("accommodations");
+        assertThat(updatedAccommodations).isEmpty();
 
         // Step 4 — DELETE /destinations/{id} -> 204 No Content
         ResponseEntity<Void> deleteResponse = restTemplate.exchange(
@@ -102,6 +137,49 @@ class DestinationLifecycleIntegrationTest {
         ResponseEntity<Map> response = restTemplate.exchange(
                 "/destinations/" + UUID.randomUUID(), HttpMethod.GET, authorizedEntity(), Map.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void endDateBeforeStartDateIsRejected() {
+        Map<String, Object> body = Map.of(
+                "name", "Kyoto", "country", "Japan",
+                "startDate", "2026-09-10", "endDate", "2026-09-05");
+        ResponseEntity<Map> response = restTemplate.exchange(
+                "/destinations", HttpMethod.POST, authorizedJsonEntity(body), Map.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void accommodationCheckOutBeforeCheckInIsRejected() {
+        Map<String, Object> body = Map.of(
+                "name", "Seville", "country", "Spain",
+                "startDate", "2026-09-01", "endDate", "2026-09-05",
+                "accommodations", List.of(Map.of(
+                        "name", "Hostal Sevilla", "type", "HOSTEL",
+                        "checkIn", "2026-09-03", "checkOut", "2026-09-02")));
+        ResponseEntity<Map> response = restTemplate.exchange(
+                "/destinations", HttpMethod.POST, authorizedJsonEntity(body), Map.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void softDeletingADestinationHidesItsActivitiesAndAccommodationsWithoutRemovingThem() {
+        Map<String, Object> createBody = Map.of(
+                "name", "Oslo", "country", "Norway",
+                "startDate", "2026-08-01", "endDate", "2026-08-03",
+                "activities", List.of("Vigeland Park"),
+                "accommodations", List.of(Map.of("name", "Oslo Inn", "type", "HOTEL")));
+        ResponseEntity<Map> createResponse = restTemplate.exchange(
+                "/destinations", HttpMethod.POST, authorizedJsonEntity(createBody), Map.class);
+        UUID id = UUID.fromString((String) createResponse.getBody().get("id"));
+
+        restTemplate.exchange("/destinations/" + id, HttpMethod.DELETE, authorizedEntity(), Void.class);
+
+        ResponseEntity<Map> getAfterDelete = restTemplate.exchange(
+                "/destinations/" + id, HttpMethod.GET, authorizedEntity(), Map.class);
+        assertThat(getAfterDelete.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     private static HttpEntity<Map<String, Object>> authorizedJsonEntity(Map<String, Object> body) {

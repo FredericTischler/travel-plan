@@ -19,6 +19,11 @@ import org.springframework.data.neo4j.core.Neo4jClient;
  *
  * {@code CREATE CONSTRAINT ... IF NOT EXISTS} is idempotent: safe to run on
  * every startup, including against an already-initialised database.
+ *
+ * Same constraint is applied to {@code Activity.id} and
+ * {@code Accommodation.id}: both are application-assigned UUIDs (see their
+ * respective entity Javadoc), so uniqueness is not guaranteed by Neo4j
+ * itself unless declared.
  */
 @Configuration
 public class Neo4jSchemaInitializer {
@@ -32,7 +37,15 @@ public class Neo4jSchemaInitializer {
                             "CREATE CONSTRAINT destination_id_unique IF NOT EXISTS "
                                     + "FOR (d:Destination) REQUIRE d.id IS UNIQUE")
                     .run();
-            log.info("Neo4j schema constraint ensured: Destination.id IS UNIQUE");
+            neo4jClient.query(
+                            "CREATE CONSTRAINT activity_id_unique IF NOT EXISTS "
+                                    + "FOR (a:Activity) REQUIRE a.id IS UNIQUE")
+                    .run();
+            neo4jClient.query(
+                            "CREATE CONSTRAINT accommodation_id_unique IF NOT EXISTS "
+                                    + "FOR (a:Accommodation) REQUIRE a.id IS UNIQUE")
+                    .run();
+            log.info("Neo4j schema constraints ensured: Destination.id, Activity.id, Accommodation.id IS UNIQUE");
         };
     }
 }

@@ -99,6 +99,33 @@ class TransportGraphIntegrationTest {
     }
 
     @Test
+    void departureAndArrivalTimeAreOptionalScheduleDetailsCarriedThrough() {
+        UUID a = createDestination("Barcelona", "Spain");
+        UUID b = createDestination("Nice", "France");
+
+        Map<String, Object> transportBody = Map.of(
+                "toDestinationId", b.toString(),
+                "mode", "PLANE",
+                "durationMinutes", 75,
+                "departureTime", "2026-05-01T08:30:00Z",
+                "arrivalTime", "2026-05-01T09:45:00Z");
+        ResponseEntity<Map> createResponse = restTemplate.exchange(
+                "/destinations/" + a + "/transports", HttpMethod.POST,
+                authorizedJsonEntity(transportBody), Map.class);
+        assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(createResponse.getBody()).containsEntry("departureTime", "2026-05-01T08:30:00Z");
+        assertThat(createResponse.getBody()).containsEntry("arrivalTime", "2026-05-01T09:45:00Z");
+
+        ResponseEntity<List> listResponse = restTemplate.exchange(
+                "/destinations/" + a + "/transports", HttpMethod.GET, authorizedEntity(), List.class);
+        assertThat(listResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> hop = (Map<String, Object>) listResponse.getBody().get(0);
+        assertThat(hop).containsEntry("departureTime", "2026-05-01T08:30:00Z");
+        assertThat(hop).containsEntry("arrivalTime", "2026-05-01T09:45:00Z");
+    }
+
+    @Test
     void selfLoopIsRejected() {
         UUID a = createDestination("Rome", "Italy");
 
@@ -167,7 +194,10 @@ class TransportGraphIntegrationTest {
     private UUID createDestination(String name, String country) {
         ResponseEntity<Map> response = restTemplate.exchange(
                 "/destinations", HttpMethod.POST,
-                authorizedJsonEntity(Map.of("name", name, "country", country)), Map.class);
+                authorizedJsonEntity(Map.of(
+                        "name", name, "country", country,
+                        "startDate", "2026-05-01", "endDate", "2026-05-03")),
+                Map.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return UUID.fromString((String) response.getBody().get("id"));
     }

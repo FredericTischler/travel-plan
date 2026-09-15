@@ -3,6 +3,7 @@ package com.travelplan.travel.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 /**
@@ -15,6 +16,10 @@ import java.util.UUID;
  * must each map to HTTP 400 with a specific message, which only
  * {@link com.travelplan.travel.service.TransportService} can resolve — same
  * approach as {@code UpdateStatusRequest} in payment-service.
+ *
+ * {@code departureTime}/{@code arrivalTime} are optional schedule details
+ * (both nullable, no validation rule between them — kept minimal, same
+ * scope as the rest of increment 2).
  */
 public class CreateTransportRequest {
 
@@ -25,6 +30,10 @@ public class CreateTransportRequest {
     private String mode;
 
     private int durationMinutes;
+
+    private OffsetDateTime departureTime;
+
+    private OffsetDateTime arrivalTime;
 
     public CreateTransportRequest() {
         // required for Jackson deserialization
@@ -52,5 +61,21 @@ public class CreateTransportRequest {
 
     public void setDurationMinutes(int durationMinutes) {
         this.durationMinutes = durationMinutes;
+    }
+
+    public OffsetDateTime getDepartureTime() {
+        return departureTime;
+    }
+
+    public void setDepartureTime(OffsetDateTime departureTime) {
+        this.departureTime = departureTime;
+    }
+
+    public OffsetDateTime getArrivalTime() {
+        return arrivalTime;
+    }
+
+    public void setArrivalTime(OffsetDateTime arrivalTime) {
+        this.arrivalTime = arrivalTime;
     }
 }

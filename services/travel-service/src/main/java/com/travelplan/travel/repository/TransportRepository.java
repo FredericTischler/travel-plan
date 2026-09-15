@@ -3,6 +3,8 @@ package com.travelplan.travel.repository;
 import org.springframework.data.neo4j.core.Neo4jClient;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -28,7 +30,10 @@ public class TransportRepository {
     private static final String CREATE_QUERY = """
             MATCH (origin:Destination), (target:Destination)
             WHERE origin.id = $fromId AND target.id = $toId
-            CREATE (origin)-[:TRANSPORT {mode: $mode, durationMinutes: $durationMinutes}]->(target)
+            CREATE (origin)-[:TRANSPORT {
+                mode: $mode, durationMinutes: $durationMinutes,
+                departureTime: $departureTime, arrivalTime: $arrivalTime
+            }]->(target)
             """;
 
     // First real traversal query of the project (Phase 0 justification test).
@@ -40,6 +45,7 @@ public class TransportRepository {
             MATCH (origin:Destination)-[t:TRANSPORT]->(target:Destination)
             WHERE origin.id = $id AND origin.deletedAt IS NULL AND target.deletedAt IS NULL
             RETURN t.mode AS mode, t.durationMinutes AS durationMinutes,
+                   t.departureTime AS departureTime, t.arrivalTime AS arrivalTime,
                    target.id AS targetId, target.name AS targetName, target.country AS targetCountry
             """;
 
@@ -54,14 +60,16 @@ public class TransportRepository {
      * identified by {@code fromId} to the one identified by {@code toId}.
      * Assumes both already exist and are active (checked by the caller).
      */
-    public void create(UUID fromId, UUID toId, String mode, int durationMinutes) {
-        neo4jClient.query(CREATE_QUERY)
-                .bindAll(Map.of(
-                        "fromId", fromId.toString(),
-                        "toId", toId.toString(),
-                        "mode", mode,
-                        "durationMinutes", durationMinutes))
-                .run();
+    public void create(UUID fromId, UUID toId, String mode, int durationMinutes,
+                        OffsetDateTime departureTime, OffsetDateTime arrivalTime) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("fromId", fromId.toString());
+        params.put("toId", toId.toString());
+        params.put("mode", mode);
+        params.put("durationMinutes", durationMinutes);
+        params.put("departureTime", departureTime);
+        params.put("arrivalTime", arrivalTime);
+        neo4jClient.query(CREATE_QUERY).bindAll(params).run();
     }
 
     /**
@@ -76,6 +84,8 @@ public class TransportRepository {
                 .mappedBy((typeSystem, record) -> new TransportEdge(
                         record.get("mode").asString(),
                         record.get("durationMinutes").asInt(),
+                        record.get("departureTime").isNull() ? null : record.get("departureTime").asOffsetDateTime(),
+                        record.get("arrivalTime").isNull() ? null : record.get("arrivalTime").asOffsetDateTime(),
                         UUID.fromString(record.get("targetId").asString()),
                         record.get("targetName").asString(),
                         record.get("targetCountry").asString()))

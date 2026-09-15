@@ -70,9 +70,11 @@ public class TransportService {
         Destination target = destinationRepository.findActiveById(toId)
                 .orElseThrow(() -> new DestinationNotFoundException(toId));
 
-        transportRepository.create(origin.getId(), target.getId(), request.getMode(), request.getDurationMinutes());
+        transportRepository.create(origin.getId(), target.getId(), request.getMode(), request.getDurationMinutes(),
+                request.getDepartureTime(), request.getArrivalTime());
 
         return new TransportResponse(request.getMode(), request.getDurationMinutes(),
+                request.getDepartureTime(), request.getArrivalTime(),
                 target.getId(), target.getName(), target.getCountry());
     }
 
@@ -91,6 +93,7 @@ public class TransportService {
 
         return transportRepository.findActiveOutgoing(id).stream()
                 .map(edge -> new TransportResponse(edge.mode(), edge.durationMinutes(),
+                        edge.departureTime(), edge.arrivalTime(),
                         edge.targetId(), edge.targetName(), edge.targetCountry()))
                 .collect(Collectors.toList());
     }
