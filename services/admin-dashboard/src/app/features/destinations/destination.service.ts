@@ -5,23 +5,72 @@ import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
 
 /**
- * Shape of the travel-service GET/POST /destinations response items.
+ * One activity attached to a destination, as returned by the API.
+ * See services/travel-service ActivityResponse.java.
+ */
+export interface Activity {
+  id: string;
+  name: string;
+}
+
+/**
+ * One accommodation attached to a destination, as returned by the API.
+ * `type` is a free-text field server-side (no enum enforced by
+ * travel-service), `checkIn`/`checkOut` are optional (ISO date strings,
+ * `null` when the stay spans the whole destination visit).
+ * See services/travel-service AccommodationResponse.java.
+ */
+export interface Accommodation {
+  id: string;
+  name: string;
+  type: string;
+  checkIn: string | null;
+  checkOut: string | null;
+}
+
+/**
+ * Shape of the travel-service GET/POST/PUT /destinations response items.
  * See services/travel-service DestinationResponse.java.
  */
 export interface Destination {
   id: string;
   name: string;
   country: string;
+  startDate: string;
+  endDate: string;
+  /** Always server-derived from startDate/endDate, never sent on writes. */
+  durationDays: number;
+  activities: Activity[];
+  accommodations: Accommodation[];
   createdAt: string;
 }
 
+/** One accommodation entry as sent in a create/update request body. */
+export interface AccommodationInput {
+  name: string;
+  type: string;
+  checkIn?: string | null;
+  checkOut?: string | null;
+}
+
 /**
- * Access to the travel-service /destinations endpoints. The auth
+ * Request body shared by POST /destinations and PUT /destinations/{id}.
+ * See services/travel-service CreateDestinationRequest.java and
+ * UpdateDestinationRequest.java (identical shape).
+ */
+export interface DestinationInput {
+  name: string;
+  country: string;
+  startDate: string;
+  endDate: string;
+  activities: string[];
+  accommodations: AccommodationInput[];
+}
+
+/**
+ * CRUD access to the travel-service /destinations endpoints. The auth
  * interceptor attaches the Bearer token automatically for every request
  * whose URL starts with environment.travelApiUrl.
- *
- * No update() method: travel-service exposes no PATCH/PUT on Destination
- * (soft-delete only), so editing is out of scope here.
  */
 @Injectable({ providedIn: 'root' })
 export class DestinationService {
@@ -31,8 +80,12 @@ export class DestinationService {
     return this.http.get<Destination[]>(`${environment.travelApiUrl}/destinations`);
   }
 
-  create(name: string, country: string): Observable<Destination> {
-    return this.http.post<Destination>(`${environment.travelApiUrl}/destinations`, { name, country });
+  create(input: DestinationInput): Observable<Destination> {
+    return this.http.post<Destination>(`${environment.travelApiUrl}/destinations`, input);
+  }
+
+  update(id: string, input: DestinationInput): Observable<Destination> {
+    return this.http.put<Destination>(`${environment.travelApiUrl}/destinations/${id}`, input);
   }
 
   delete(id: string): Observable<void> {
