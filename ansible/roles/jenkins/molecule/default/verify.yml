@@ -168,30 +168,55 @@
         success_msg: "Environnement limite a 3 variables non sensibles OK."
 
     # =====================================================================
-    # 2) DEFINITION DU JOB — declenchement MANUEL prouve par le XML
+    # 2) DEFINITIONS DES JOBS — declenchement MANUEL prouve par CHAQUE XML
+    #
+    # Increment CI/CD n°2 : il y a desormais TROIS jobs (identity/payment/travel)
+    # rendus depuis UN template generique. On n'asserte donc pas "le" job : on
+    # asserte les 3, un par un. C'est le seul moyen de detecter une entree de
+    # `jenkins_jobs` mal formee (un scriptPath vide rendrait un XML valide mais
+    # inutilisable) ET de prouver que le <triggers/> vide vaut pour tous.
+    #
+    # `expected_jobs` est ecrit A LA MAIN ici plutot que derive de jenkins_jobs :
+    # un test qui recalcule sa reference a partir de la variable testee ne teste
+    # rien. C'est deliberement redondant avec defaults/main.yml.
     # =====================================================================
-    - name: "Read rendered job config.xml"
+    - name: "Read every rendered job config.xml"
       ansible.builtin.slurp:
-        src: "{{ jdir }}/job-identity-service-test-config.xml"
-      register: job_b64
+        src: "{{ jdir }}/job-{{ item.name }}-config.xml"
+      loop: "{{ expected_jobs }}"
+      loop_control:
+        label: "{{ item.name }}"
+      register: jobs_b64
+      vars:
+        expected_jobs:
+          - name: identity-service-test
+            script_path: services/identity-service/Jenkinsfile
+          - name: payment-service-test
+            script_path: services/payment-service/Jenkinsfile
+          - name: travel-service-test
+            script_path: services/travel-service/Jenkinsfile
 
-    - name: "Set job config text"
-      ansible.builtin.set_fact:
-        job_cfg: "{{ job_b64.content | b64decode }}"
-
-    - name: "Assert job: Pipeline from SCM pointant sur le Jenkinsfile d'identity"
+    - name: "Assert each job: Pipeline from SCM pointant sur SON Jenkinsfile"
       ansible.builtin.assert:
         that:
           - "'org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition' in job_cfg"
           - "'hudson.plugins.git.GitSCM' in job_cfg"
           - "'<url>file:///srv/travel-plan-repo</url>' in job_cfg"
           - "'<name>*/main</name>' in job_cfg"
-          - "'<scriptPath>services/identity-service/Jenkinsfile</scriptPath>' in job_cfg"
-        fail_msg: "Le job ne pointe pas sur le Jenkinsfile d'identity-service via SCM."
-        success_msg: "Job Pipeline from SCM -> services/identity-service/Jenkinsfile OK."
+          - "'<scriptPath>' ~ item.item.script_path ~ '</scriptPath>' in job_cfg"
+        fail_msg: >-
+          Le job {{ item.item.name }} ne pointe pas sur
+          {{ item.item.script_path }} via SCM.
+        success_msg: >-
+          Job {{ item.item.name }} -> {{ item.item.script_path }} OK.
+      loop: "{{ jobs_b64.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      vars:
+        job_cfg: "{{ item.content | b64decode }}"
 
-    # LE point non negociable de cet increment : declenchement MANUEL strict.
-    - name: "Assert job: <triggers/> VIDE (aucun webhook, aucun pollSCM, aucun timer)"
+    # LE point non negociable du projet : declenchement MANUEL strict, sur les 3.
+    - name: "Assert each job: <triggers/> VIDE (aucun webhook, pollSCM, timer)"
       ansible.builtin.assert:
         that:
           - "'<triggers/>' in job_cfg"
@@ -200,16 +225,58 @@
           - "'TimerTrigger' not in job_cfg"
           - "'<spec>' not in job_cfg"
         fail_msg: >-
-          Un trigger est declare : cet increment exige un declenchement MANUEL
-          strict (webhooks et pollSCM = increments separes, a ne pas anticiper).
-        success_msg: "<triggers/> vide OK — declenchement manuel strict."
+          Un trigger est declare dans {{ item.item.name }} : le projet exige un
+          declenchement MANUEL strict (webhooks et pollSCM = increments separes,
+          a ne pas anticiper).
+        success_msg: "{{ item.item.name }} : <triggers/> vide OK — manuel strict."
+      loop: "{{ jobs_b64.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      vars:
+        job_cfg: "{{ item.content | b64decode }}"
 
-    - name: "Assert job: zero credential, un seul service, aucune analyse qualite"
+    - name: "Assert each job: zero credential, un seul module, aucune analyse qualite"
       ansible.builtin.assert:
         that:
+          # Zero secret : le transport file:// n'authentifie rien.
           - "'credentialsId' not in job_cfg"
-          - "'payment-service' not in job_cfg"
-          - "'travel-service' not in job_cfg"
+          # Etanchéité entre jobs : le config.xml d'un service ne doit mentionner
+          # QUE son propre module (un copier-coller rate se verrait ici).
+          - "job_cfg | regex_findall('services/[a-z-]+/Jenkinsfile') | unique | length == 1"
           - "'sonar' not in (job_cfg | lower)"
-        fail_msg: "Le job deborde du perimetre (credential / autre service / Sonar)."
-        success_msg: "Job : zero credential, identity-service seul, pas de Sonar OK."
+          # Hors perimetre explicite : aucun build/push d'image depuis Jenkins.
+          - "'docker' not in (job_cfg | lower)"
+        fail_msg: >-
+          Le job {{ item.item.name }} deborde du perimetre (credential / autre
+          module / Sonar / Docker).
+        success_msg: >-
+          {{ item.item.name }} : zero credential, module unique, ni Sonar ni
+          Docker OK.
+      loop: "{{ jobs_b64.results }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      vars:
+        job_cfg: "{{ item.content | b64decode }}"
+
+    # Garde-fou anti-derive : le repertoire de rendu ne doit contenir QUE le
+    # fragment Compose et les 3 config.xml. Un fichier orphelin (ex : l'ancien
+    # job-<nom>-config.xml d'un service retire de jenkins_jobs) signalerait que
+    # le role ne nettoie pas ce qu'il ne gere plus.
+    - name: "List rendered artifacts"
+      ansible.builtin.find:
+        paths: "{{ jdir }}"
+        file_type: file
+      register: rendered
+
+    - name: "Assert: exactement le fragment + 3 config.xml, rien d'autre"
+      ansible.builtin.assert:
+        that:
+          - "rendered.files | map(attribute='path') | map('basename') | sort == [
+              'compose.jenkins.yml',
+              'job-identity-service-test-config.xml',
+              'job-payment-service-test-config.xml',
+              'job-travel-service-test-config.xml']"
+        fail_msg: >-
+          Le repertoire de rendu contient autre chose que le fragment Compose et
+          les 3 definitions de jobs attendues.
+        success_msg: "Rendu : compose.jenkins.yml + 3 job-*-config.xml OK."

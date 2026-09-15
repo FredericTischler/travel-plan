@@ -1,22 +1,32 @@
 {#
-  Definition du job Pipeline `{{ jenkins_job_name }}`, rendue par le role Ansible
-  `jenkins`. Ce fichier est un config.xml Jenkins PRET A POSTER (CLI create-job
-  ou POST /createItem) — Ansible ne le pousse PAS lui-meme : creer le job exige
-  de s'authentifier aupres de Jenkins, donc un secret cote Ansible, refuse tant
-  que Vault n'est pas cable a Jenkins (cf. tasks/main.yml).
+  Template GENERIQUE d'un job Pipeline Travel-Plan (increment CI/CD n°2 :
+  generalisation multi-jobs). Il est rendu UNE FOIS PAR ENTREE de la liste
+  `jenkins_jobs` (defaults/main.yml), via un loop dans tasks/main.yml. Les
+  variables de boucle disponibles ici sont exactement : `job.name`,
+  `job.description`, `job.script_path`. Tout le reste (URL SCM, branche,
+  retention) est COMMUN aux 3 jobs et vient des variables du role — c'est
+  deliberé : ce qui doit rester identique entre services n'est ecrit qu'une fois.
 
-  POINTS NON NEGOCIABLES DE CET INCREMENT, VISIBLES DANS LE XML :
+  Ce fichier est un config.xml Jenkins PRET A POSTER (CLI create-job ou POST
+  /createItem) — Ansible ne le pousse PAS lui-meme : creer le job exige de
+  s'authentifier aupres de Jenkins, donc un secret cote Ansible, refuse tant que
+  Vault n'est pas cable a Jenkins (cf. tasks/main.yml).
+
+  POINTS NON NEGOCIABLES, VISIBLES DANS LE XML — ET VRAIS POUR LES 3 JOBS,
+  puisqu'ils sont ecrits ICI, dans l'unique source de tous les config.xml :
     - <triggers/> VIDE  => declenchement MANUEL strict. Aucun pollSCM, aucun
       webhook, aucun scan multibranch. C'est la preuve structurelle, pas une
-      promesse en commentaire.
+      promesse en commentaire. Un seul endroit a auditer pour les 3 jobs.
     - Aucun <credentialsId> dans userRemoteConfigs => ZERO secret. Le SCM est un
       miroir local monte en lecture seule, transport file://.
-    - Un seul job, un seul service (identity). Rien pour payment/travel.
+    - Aucune etape d'analyse qualite, aucun build/push d'image : ce que fait
+      reellement un job est decrit par le Jenkinsfile VERSIONNE du service
+      (scriptPath), pas par ce XML.
 -#}
 <?xml version='1.1' encoding='UTF-8'?>
 <!-- {{ ansible_managed }} -->
 <flow-definition plugin="workflow-job">
-  <description>{{ jenkins_job_description | trim }}</description>
+  <description>{{ job.description | trim }}</description>
   <keepDependencies>false</keepDependencies>
   <properties>
     <jenkins.model.BuildDiscarderProperty>
@@ -48,11 +58,13 @@
       </branches>
       <extensions/>
     </scm>
-    <!-- Jenkinsfile versionne DANS le depot, a la racine d'identity-service. -->
-    <scriptPath>{{ jenkins_job_script_path }}</scriptPath>
+    <!-- Jenkinsfile versionne DANS le depot, a la racine du module teste. Le
+         chemin est RELATIF A LA RACINE DU MONOREPO : le checkout ramene tout le
+         depot, pas le sous-repertoire du service. -->
+    <scriptPath>{{ job.script_path }}</scriptPath>
     <lightweight>false</lightweight>
   </definition>
-  <!-- VIDE, ET CA DOIT LE RESTER DANS CET INCREMENT :
+  <!-- VIDE, ET CA DOIT LE RESTER POUR LES TROIS JOBS :
        declenchement MANUEL uniquement (bouton "Build Now" / CLI `build`). -->
   <triggers/>
   <disabled>false</disabled>

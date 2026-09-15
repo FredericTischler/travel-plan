@@ -1,30 +1,45 @@
 ---
 # roles/jenkins/defaults/main.yml
 #
-# Variables d'INFRASTRUCTURE du role jenkins (increment CI/CD n°1, MINIMAL).
+# Variables d'INFRASTRUCTURE du role jenkins
+# (increment CI/CD n°2 : GENERALISATION MULTI-JOBS).
 #
 # Modele operatoire identique aux autres roles du projet :
 #   Ansible PROVISIONNE et REND des fichiers ; docker-compose ORCHESTRE.
 #   Aucun `docker_container` en prod, aucun `docker compose up` depuis Ansible.
 #
+# CE QUI CHANGE PAR RAPPORT A L'INCREMENT n°1 : la definition de job n'est plus
+# une poignee de scalaires cables sur identity-service, c'est une LISTE
+# (`jenkins_jobs`) parcourue par une boucle sur UN template generique. Ajouter un
+# service au perimetre CI = ajouter une entree ici + commiter son Jenkinsfile ;
+# aucune modification de tasks/ ni de templates/ n'est requise.
+#
 # PERIMETRE DE CET INCREMENT (assume, pas un oubli) :
-#   - UN controleur Jenkins, UN job Pipeline declenche A LA MAIN, qui build/teste
-#     identity-service (`./mvnw test`).
+#   - UN controleur Jenkins, TROIS jobs Pipeline (identity / payment / travel),
+#     tous declenches A LA MAIN, chacun jouant `./mvnw test` sur son module.
 #   - PAS de SonarQube (increment separe).
-#   - PAS de webhook / pollSCM / multibranch scan (declenchement manuel STRICT).
-#   - PAS de pipeline payment-service / travel-service.
+#   - PAS de webhook / pollSCM / multibranch scan (declenchement manuel STRICT
+#     — c'est la garantie structurelle du projet, prouvee par le <triggers/>
+#     vide de CHACUN des 3 config.xml, asserte par Molecule).
 #   - PAS de build/push d'image Docker depuis Jenkins.
 #   - PAS d'agent Jenkins distinct : les builds tournent sur le controleur
 #     (cf. jenkins_mem_limit ci-dessous pour la consequence RAM).
+#   - PAS de job "chapeau" qui enchainerait les 3 : 3 jobs independants, chacun
+#     declenchable seul. Un pipeline d'orchestration multi-modules supposerait un
+#     ordre de dependance entre services qui n'existe pas ici (ils ne partagent
+#     que le monorepo), et ferait tourner 3 builds Maven dans la meme cgroup de
+#     1600m => OOM. disableConcurrentBuilds() ne protege QUE d'un job contre
+#     lui-meme : c'est a l'operateur de ne pas lancer les 3 en meme temps.
 
 # --- Image (tag epingle, jamais latest) -------------------------------------
 # Tag verifie empiriquement : `docker run --rm jenkins/jenkins:2.568.3-lts-jdk21`
 # rapporte JENKINS_VERSION=2.568.3, Temurin 21 (JDK complet, pas un JRE) et
 # embarque deja git / curl / unzip / bash.
-# JDK 21 choisi pour etre ALIGNE sur identity-service (Dockerfile :
-# eclipse-temurin:21.0.7_6-jdk-noble) : le `./mvnw test` du job tourne donc sur
-# la meme majeure Java que le build applicatif. Un tag -jdk17 casserait cet
-# alignement (Spring Boot 3.4 compile en 21 ici).
+# JDK 21 choisi pour etre ALIGNE sur les TROIS services : identity, payment et
+# travel utilisent tous eclipse-temurin:21.0.7_6-jdk-noble dans leur Dockerfile
+# (verifie). Le `./mvnw test` de chaque job tourne donc sur la meme majeure Java
+# que le build applicatif correspondant, avec UNE seule image de controleur. Un
+# tag -jdk17 casserait cet alignement (Spring Boot 3.4 compile en 21 ici).
 # `unzip` PRESENT est une dependance DURE : le `mvnw` de ce depot est un wrapper
 # shell artisanal (pas de maven-wrapper.jar) qui telecharge la distribution
 # Maven en .zip et l'extrait avec `unzip` (cf. commentaire du Dockerfile
@@ -48,9 +63,11 @@ jenkins_container_name: "travel-plan-jenkins"
 # Cet ecart est SOUTENABLE parce que le profil `ci` est explicitement "a la
 # demande, idealement quand la stack applicative est down" (§8) : les 1,6 Go ne
 # cohabitent pas avec les ~3,8 Go de la stack runtime.
-# NOTE : les conteneurs Testcontainers (postgres:17.5-bookworm) sont des
-# conteneurs FRERES sur le demon hote — ils ne comptent PAS dans cette limite
-# (compter ~250 Mo de plus a cote, sur l'hote).
+# NOTE : les conteneurs Testcontainers (postgres:17.5-bookworm pour identity et
+# payment, neo4j:5.26.6-community pour travel) sont des conteneurs FRERES sur le
+# demon hote — ils ne comptent PAS dans cette limite (compter ~250 Mo de plus a
+# cote pour postgres, ~600 Mo pour neo4j, sur l'hote). C'est la raison
+# supplementaire de ne PAS lancer les 3 jobs en parallele sur une machine 8 Go.
 jenkins_mem_limit: "1600m"
 # Heap du controleur borne explicitement (meme discipline que les JVM du projet,
 # cf. §4 "-Xmx fixe sur CHAQUE JVM") : sans cela la JVM prendrait 25% de
@@ -84,8 +101,9 @@ jenkins_home_volume: "travel-plan-jenkins-home"
 jenkins_http_port: 8080
 
 # --- Acces au demon Docker (OBLIGATOIRE ici, cf. README "Decision securite") -
-# Les tests d'identity-service utilisent Testcontainers (PostgreSQLContainer) :
-# le job DOIT pouvoir creer des conteneurs. Le socket est donc monte en
+# Les tests des trois services utilisent Testcontainers (PostgreSQLContainer
+# pour identity et payment, Neo4jContainer pour travel) : les jobs DOIVENT
+# pouvoir creer des conteneurs. Le socket est donc monte en
 # LECTURE-ECRITURE — contrairement au role traefik ou :ro suffit.
 jenkins_docker_socket: "/var/run/docker.sock"
 # GID du groupe `docker` de l'HOTE, ajoute au process jenkins (uid 1000) via
@@ -149,16 +167,48 @@ jenkins_scm_mount_path: "/srv/travel-plan-repo"
 jenkins_scm_url: "file://{{ jenkins_scm_mount_path }}"
 jenkins_scm_branch: "main"
 
-# --- Job Pipeline rendu (config.xml pret a POSTer, PAS cree par Ansible) ----
-# Ansible REND le config.xml ; il NE CREE PAS le job. Creer le job exigerait de
-# s'authentifier aupres de Jenkins => un secret (mot de passe admin / token API)
-# cote Ansible, avant que Vault ne soit cable a Jenkins. Contrat du projet :
+# --- Jobs Pipeline rendus (config.xml prets a POSTer, PAS crees par Ansible) --
+# Ansible REND les config.xml ; il NE CREE PAS les jobs. Creer un job exigerait
+# de s'authentifier aupres de Jenkins => un secret (mot de passe admin / token
+# API) cote Ansible, avant que Vault ne soit cable a Jenkins. Contrat du projet :
 # on s'arrete et on le signale plutot que de poser un credential en clair.
-# La creation se fait donc par l'operateur, en UNE commande CLI documentee dans
-# le README, avec le mot de passe genere a l'execution (jamais commite).
-jenkins_job_name: "identity-service-test"
-jenkins_job_description: >-
-  Build + tests unitaires/integration d'identity-service (./mvnw test).
-  Declenchement MANUEL uniquement — aucun trigger SCM, aucun webhook.
-# Chemin du Jenkinsfile DANS le depot (relatif a la racine du checkout).
-jenkins_job_script_path: "services/identity-service/Jenkinsfile"
+# La creation se fait donc par l'operateur, en UNE commande CLI par job,
+# documentee dans le README, avec le mot de passe genere a l'execution (jamais
+# commite).
+#
+# POURQUOI UNE LISTE plutot que 3 jeux de scalaires (jenkins_job_name_identity,
+# ..._payment, ...) : les 3 jobs sont STRUCTURELLEMENT identiques — meme SCM,
+# meme branche, meme politique de retention, meme <triggers/> vide. Seuls varient
+# le nom, la description et le scriptPath. Une liste + un template generique
+# rendent cette identite verifiable d'un coup d'oeil : il n'existe qu'UN endroit
+# ou un trigger ou un credential pourrait se glisser, donc qu'UN endroit a
+# auditer. Trois templates copies-colles auraient au contraire permis a un job de
+# deriver en silence.
+#
+# CLES ATTENDUES PAR ENTREE (toutes obligatoires, cf. assertion dans tasks/) :
+#   name        -> nom de l'item Jenkins ET suffixe du fichier rendu
+#                  (job-<name>-config.xml). Sert aussi de nom dans l'URL REST.
+#   description -> texte affiche sur la page du job.
+#   script_path -> chemin du Jenkinsfile RELATIF A LA RACINE DU DEPOT (le
+#                  checkout ramene le monorepo entier, pas le module).
+#
+# Ajouter un service au perimetre CI = ajouter une entree ici + commiter son
+# Jenkinsfile. Ni tasks/main.yml ni le template ne bougent.
+jenkins_jobs:
+  - name: "identity-service-test"
+    description: >-
+      Build + tests unitaires/integration d'identity-service (./mvnw test).
+      Declenchement MANUEL uniquement — aucun trigger SCM, aucun webhook.
+    script_path: "services/identity-service/Jenkinsfile"
+  - name: "payment-service-test"
+    description: >-
+      Build + tests unitaires/integration de payment-service (./mvnw test,
+      Testcontainers postgres:17.5-bookworm).
+      Declenchement MANUEL uniquement — aucun trigger SCM, aucun webhook.
+    script_path: "services/payment-service/Jenkinsfile"
+  - name: "travel-service-test"
+    description: >-
+      Build + tests unitaires/integration de travel-service (./mvnw test,
+      Testcontainers neo4j:5.26.6-community).
+      Declenchement MANUEL uniquement — aucun trigger SCM, aucun webhook.
+    script_path: "services/travel-service/Jenkinsfile"

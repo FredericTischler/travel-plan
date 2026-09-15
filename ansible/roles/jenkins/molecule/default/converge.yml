@@ -2,6 +2,10 @@
 # Converge : joue le role jenkins dans le conteneur Debian (docker connection).
 # Pattern identique a postgres/neo4j/traefik : le role rend ses artefacts dans
 # /tmp de la plateforme Molecule, pas sur le controleur.
+#
+# `jenkins_jobs` n'est PAS surcharge ici : on veut converger sur la valeur REELLE
+# des defaults (les 3 jobs identity/payment/travel), pour que verify.yml prouve
+# le perimetre effectivement livre — pas un perimetre de test artificiel.
 - name: Converge
   hosts: all
   gather_facts: false

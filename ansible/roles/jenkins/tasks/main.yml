@@ -5,12 +5,13 @@
 # PROVISIONNE et REND des fichiers ; docker-compose ORCHESTRE. Aucun
 # docker_container, aucun `docker compose up` declenche depuis ce role.
 #
-# CE QUE CE ROLE REND :
+# CE QUE CE ROLE REND (increment CI/CD n°2 : generalisation multi-jobs) :
 #   1. compose.jenkins.yml  -> fragment de service Compose (profil `ci`)
-#   2. job-<nom>-config.xml -> definition du job Pipeline, PRETE A POSTER
+#   2. job-<nom>-config.xml -> UNE definition de job Pipeline PAR ENTREE de
+#      `jenkins_jobs`, PRETE A POSTER (3 aujourd'hui : identity/payment/travel)
 #
 # CE QUE CE ROLE NE FAIT PAS (assume, pas un oubli) :
-#   - Il ne CREE pas le job dans Jenkins : cela exigerait de s'authentifier
+#   - Il ne CREE pas les jobs dans Jenkins : cela exigerait de s'authentifier
 #     (mot de passe admin / token API) => un SECRET cote Ansible, avant que
 #     Vault ne soit cable a Jenkins. Contrat du projet : on s'arrete et on le
 #     signale plutot que d'inliner un credential. La creation est une commande
@@ -83,7 +84,7 @@
       Impossible de resoudre le GID du groupe `docker` sur cet hote et
       jenkins_docker_gid n'est pas fourni. Sans lui, le conteneur Jenkins
       (uid 1000) ne peut pas ecrire sur {{ jenkins_docker_socket }} et les tests
-      Testcontainers d'identity-service echouent en EACCES.
+      Testcontainers des 3 services echouent en EACCES.
       Fournir : -e jenkins_docker_gid=$(getent group docker | cut -d: -f3)
     success_msg: "GID docker retenu : {{ jenkins_docker_gid_resolved }}"
   tags: [compose_fragment]
@@ -106,12 +107,47 @@
   tags: [compose_fragment]
 
 # --------------------------------------------------------------------------
-# 4) Definition du job Pipeline (config.xml), rendue PRETE A POSTER.
+# 4) Definitions des jobs Pipeline (config.xml), rendues PRETES A POSTER.
 #    Aucun secret dedans : SCM en file:// sans credential, aucun trigger.
+#
+#    Garde fail-fast AVANT la boucle : une entree incomplete de `jenkins_jobs`
+#    ne casserait pas le rendu (Jinja rendrait la chaine vide pour la cle
+#    manquante) — elle produirait un config.xml SYNTAXIQUEMENT VALIDE mais
+#    silencieusement faux (job sans scriptPath => "Build Now" echoue seulement
+#    au moment du build, loin d'ici). On prefere echouer au provisioning.
+#    `assert` est un module de verification : jamais `changed`, idempotence
+#    preservee.
 # --------------------------------------------------------------------------
-- name: "Render the identity-service Pipeline job definition (config.xml)"
+- name: "Assert every jenkins_jobs entry is complete (name/description/script_path)"
+  ansible.builtin.assert:
+    that:
+      - jenkins_jobs | length > 0
+      - jenkins_jobs | rejectattr('name', 'defined') | list | length == 0
+      - jenkins_jobs | rejectattr('description', 'defined') | list | length == 0
+      - jenkins_jobs | rejectattr('script_path', 'defined') | list | length == 0
+      # Noms uniques : deux entrees homonymes s'ecraseraient mutuellement au
+      # rendu (meme dest) et se marcheraient dessus au createItem.
+      - (jenkins_jobs | map(attribute='name') | list | unique | length)
+        == (jenkins_jobs | length)
+    fail_msg: >-
+      jenkins_jobs est vide, incomplet ou contient des noms dupliques. Chaque
+      entree doit porter name / description / script_path (cf. defaults).
+    success_msg: >-
+      {{ jenkins_jobs | length }} job(s) a rendre :
+      {{ jenkins_jobs | map(attribute='name') | join(', ') }}
+  tags: [job_definition]
+
+# UN SEUL template generique pour les 3 jobs : le <triggers/> vide et l'absence
+# de credential n'existent qu'a UN endroit, donc aucun job ne peut deriver sans
+# que les 3 derivent (et Molecule asserte les 3).
+# `label:` pour que la sortie affiche le nom du job et pas le dict entier.
+- name: "Render each Pipeline job definition (config.xml, one per service)"
   ansible.builtin.template:
-    src: "job-identity-service.xml.j2"
-    dest: "{{ jenkins_compose_dir }}/job-{{ jenkins_job_name }}-config.xml"
+    src: "job-pipeline.xml.j2"
+    dest: "{{ jenkins_compose_dir }}/job-{{ job.name }}-config.xml"
     mode: "0644"
+  loop: "{{ jenkins_jobs }}"
+  loop_control:
+    loop_var: job
+    label: "{{ job.name }}"
   tags: [job_definition]
