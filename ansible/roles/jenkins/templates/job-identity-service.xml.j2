@@ -1,0 +1,59 @@
+{#
+  Definition du job Pipeline `{{ jenkins_job_name }}`, rendue par le role Ansible
+  `jenkins`. Ce fichier est un config.xml Jenkins PRET A POSTER (CLI create-job
+  ou POST /createItem) — Ansible ne le pousse PAS lui-meme : creer le job exige
+  de s'authentifier aupres de Jenkins, donc un secret cote Ansible, refuse tant
+  que Vault n'est pas cable a Jenkins (cf. tasks/main.yml).
+
+  POINTS NON NEGOCIABLES DE CET INCREMENT, VISIBLES DANS LE XML :
+    - <triggers/> VIDE  => declenchement MANUEL strict. Aucun pollSCM, aucun
+      webhook, aucun scan multibranch. C'est la preuve structurelle, pas une
+      promesse en commentaire.
+    - Aucun <credentialsId> dans userRemoteConfigs => ZERO secret. Le SCM est un
+      miroir local monte en lecture seule, transport file://.
+    - Un seul job, un seul service (identity). Rien pour payment/travel.
+-#}
+<?xml version='1.1' encoding='UTF-8'?>
+<!-- {{ ansible_managed }} -->
+<flow-definition plugin="workflow-job">
+  <description>{{ jenkins_job_description | trim }}</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <jenkins.model.BuildDiscarderProperty>
+      <!-- Historique borne : sur une machine 8 Go, on ne laisse pas
+           JENKINS_HOME grossir sans limite dans le volume nomme. -->
+      <strategy class="hudson.tasks.LogRotator">
+        <daysToKeep>-1</daysToKeep>
+        <numToKeep>10</numToKeep>
+        <artifactDaysToKeep>-1</artifactDaysToKeep>
+        <artifactNumToKeep>-1</artifactNumToKeep>
+      </strategy>
+    </jenkins.model.BuildDiscarderProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <!-- Miroir LOCAL monte en lecture seule dans le conteneur Jenkins.
+               Transport file:// => AUCUNE authentification requise, donc aucun
+               identifiant a referencer ici ni a stocker dans Jenkins. -->
+          <url>{{ jenkins_scm_url }}</url>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/{{ jenkins_scm_branch }}</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+      <extensions/>
+    </scm>
+    <!-- Jenkinsfile versionne DANS le depot, a la racine d'identity-service. -->
+    <scriptPath>{{ jenkins_job_script_path }}</scriptPath>
+    <lightweight>false</lightweight>
+  </definition>
+  <!-- VIDE, ET CA DOIT LE RESTER DANS CET INCREMENT :
+       declenchement MANUEL uniquement (bouton "Build Now" / CLI `build`). -->
+  <triggers/>
+  <disabled>false</disabled>
+</flow-definition>

@@ -1,0 +1,117 @@
+---
+# roles/jenkins/tasks/main.yml
+#
+# Modele operatoire identique a postgres/vault/neo4j/traefik : Ansible
+# PROVISIONNE et REND des fichiers ; docker-compose ORCHESTRE. Aucun
+# docker_container, aucun `docker compose up` declenche depuis ce role.
+#
+# CE QUE CE ROLE REND :
+#   1. compose.jenkins.yml  -> fragment de service Compose (profil `ci`)
+#   2. job-<nom>-config.xml -> definition du job Pipeline, PRETE A POSTER
+#
+# CE QUE CE ROLE NE FAIT PAS (assume, pas un oubli) :
+#   - Il ne CREE pas le job dans Jenkins : cela exigerait de s'authentifier
+#     (mot de passe admin / token API) => un SECRET cote Ansible, avant que
+#     Vault ne soit cable a Jenkins. Contrat du projet : on s'arrete et on le
+#     signale plutot que d'inliner un credential. La creation est une commande
+#     CLI documentee (README), jouee par l'operateur avec le mot de passe
+#     genere a l'execution par Jenkins.
+#   - Il n'installe pas les plugins : meme raison (API authentifiee).
+#
+# IDEMPOTENCE par construction : uniquement assert / getent (modules de FAITS,
+# jamais `changed`) / set_fact / file / template. Aucun command:, aucun shell:.
+# Un 2e converge rapporte changed=0.
+
+# --------------------------------------------------------------------------
+# 1) Garde fail-fast : le miroir SCM local est un CHEMIN ABSOLU d'hote, il n'a
+#    pas de defaut raisonnable. Mieux vaut echouer ici, en clair, que rendre un
+#    fragment avec un bind-mount vide que Compose refuserait plus tard.
+# --------------------------------------------------------------------------
+- name: "Assert the local SCM mirror path is provided (absolute host path)"
+  ansible.builtin.assert:
+    that:
+      - jenkins_scm_repo_host_path | length > 0
+      - jenkins_scm_repo_host_path is match('^/')
+    fail_msg: >-
+      jenkins_scm_repo_host_path est vide ou non absolu. Ce role monte un MIROIR
+      LOCAL du depot en lecture seule dans Jenkins (le remote est en SSH : un
+      clone direct exigerait une cle de deploiement, donc un secret, ce que cet
+      increment refuse). Fournir :
+      -e jenkins_scm_repo_host_path=/chemin/absolu/vers/le/checkout/travel-plan
+    success_msg: "Miroir SCM local : {{ jenkins_scm_repo_host_path }}"
+  tags: [compose_fragment]
+
+# --------------------------------------------------------------------------
+# 2) GID du groupe `docker` de l'hote.
+#    Le process jenkins tourne en uid 1000 SANS le groupe docker : sans
+#    `group_add`, tout acces au socket renvoie EACCES et Testcontainers echoue.
+#    `getent` est un module de FAITS -> jamais `changed` (idempotence preservee).
+#    fail_key: false pour que l'absence du groupe (ex : plateforme Molecule)
+#    n'explose pas ici : on la rattrape par une assertion parlante juste apres.
+# --------------------------------------------------------------------------
+- name: "Look up the host docker group GID (only when not pinned explicitly)"
+  ansible.builtin.getent:
+    database: group
+    key: docker
+    fail_key: false
+  when: jenkins_docker_gid | string | length == 0
+  tags: [compose_fragment]
+
+- name: "Resolve the docker GID from the explicit variable (pinned wins)"
+  ansible.builtin.set_fact:
+    jenkins_docker_gid_resolved: "{{ jenkins_docker_gid | string }}"
+  when: jenkins_docker_gid | string | length > 0
+  tags: [compose_fragment]
+
+# `default([], true)` (2e argument = true) rattrape AUSSI une valeur falsy :
+# avec fail_key: false, un groupe absent donne `docker: null`, pas une cle
+# indefinie. Sur liste vide, l'index [1] rend Undefined -> default('') -> ''
+# -> l'assertion suivante echoue avec un message parlant.
+- name: "Resolve the docker GID from the host group database (auto-discovery)"
+  ansible.builtin.set_fact:
+    jenkins_docker_gid_resolved: >-
+      {{ ((ansible_facts.getent_group | default({}, true))['docker']
+          | default([], true))[1] | default('') }}
+  when: jenkins_docker_gid | string | length == 0
+  tags: [compose_fragment]
+
+- name: "Assert a docker GID was resolved (socket write access is mandatory)"
+  ansible.builtin.assert:
+    that:
+      - jenkins_docker_gid_resolved | length > 0
+    fail_msg: >-
+      Impossible de resoudre le GID du groupe `docker` sur cet hote et
+      jenkins_docker_gid n'est pas fourni. Sans lui, le conteneur Jenkins
+      (uid 1000) ne peut pas ecrire sur {{ jenkins_docker_socket }} et les tests
+      Testcontainers d'identity-service echouent en EACCES.
+      Fournir : -e jenkins_docker_gid=$(getent group docker | cut -d: -f3)
+    success_msg: "GID docker retenu : {{ jenkins_docker_gid_resolved }}"
+  tags: [compose_fragment]
+
+# --------------------------------------------------------------------------
+# 3) Repertoire de rendu + fragment de service Compose (templating pur)
+# --------------------------------------------------------------------------
+- name: "Ensure compose fragment directory exists"
+  ansible.builtin.file:
+    path: "{{ jenkins_compose_dir }}"
+    state: directory
+    mode: "0755"
+  tags: [compose_fragment]
+
+- name: "Render Jenkins compose service fragment"
+  ansible.builtin.template:
+    src: "compose.jenkins.yml.j2"
+    dest: "{{ jenkins_compose_dir }}/compose.jenkins.yml"
+    mode: "0644"
+  tags: [compose_fragment]
+
+# --------------------------------------------------------------------------
+# 4) Definition du job Pipeline (config.xml), rendue PRETE A POSTER.
+#    Aucun secret dedans : SCM en file:// sans credential, aucun trigger.
+# --------------------------------------------------------------------------
+- name: "Render the identity-service Pipeline job definition (config.xml)"
+  ansible.builtin.template:
+    src: "job-identity-service.xml.j2"
+    dest: "{{ jenkins_compose_dir }}/job-{{ jenkins_job_name }}-config.xml"
+    mode: "0644"
+  tags: [job_definition]

@@ -68,6 +68,27 @@ assembly_payment_fragment: ""
 assembly_travel_enabled: false
 assembly_travel_fragment: ""
 
+# --- Fragment jenkins (RENDU par le rôle Ansible `jenkins`) ------------------
+# Contrairement à identity/payment/travel (fragments statiques du dépôt, chemin
+# ABSOLU variable par machine), jenkins est un rôle Ansible qui REND son propre
+# fragment sous assembly_compose_dir — même pattern que postgres/vault/neo4j/
+# traefik. Le chemin est donc RELATIF et n'a pas à être fourni en -e.
+#
+# DÉFAUT = false, et c'est délibéré (≠ traefik, lui inclus sans flag) :
+#   1. Les `include:` Compose sont résolus QUEL QUE SOIT le --profile. Un
+#      opérateur qui n'a pas (encore) joué le rôle `jenkins` n'a pas ce fragment
+#      sur disque : l'inclure en dur casserait le rendu de core ET de full, pas
+#      seulement celui de ci. Le flag garde le rendu par défaut STRICTEMENT
+#      inchangé — même raisonnement que payment/travel.
+#   2. La CI est explicitement « à la demande » (docs §8) : Jenkins n'appartient
+#      à aucun des profils qui tournent au quotidien.
+# Ce défaut pourra passer à true le jour où le rôle `jenkins` fera partie du run
+# de provisioning standard (comme identity l'a fait une fois prouvé bout-en-bout).
+# À activer :
+#   -e assembly_jenkins_enabled=true
+assembly_jenkins_enabled: false
+assembly_jenkins_fragment: "jenkins/compose.jenkins.yml"
+
 # Réseaux Docker à créer (Ansible en est propriétaire, driver bridge).
 assembly_networks:
   - name: "edge-net"

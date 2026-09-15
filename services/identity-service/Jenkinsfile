@@ -1,0 +1,89 @@
+// =============================================================================
+// identity-service — pipeline CI (increment CI/CD n°1, MINIMAL).
+//
+// DECLENCHEMENT : MANUEL UNIQUEMENT.
+//   Il n'y a volontairement AUCUN bloc `triggers { ... }` ici, et le config.xml
+//   du job (rendu par le role Ansible `jenkins`) porte un `<triggers/>` vide.
+//   Pas de pollSCM, pas de webhook, pas de scan multibranch : ce sont des
+//   increments separes. Ce pipeline se lance au bouton "Build Now" ou via
+//   `jenkins-cli build`.
+//
+// CE QUE CE PIPELINE FAIT : checkout + `./mvnw test`. RIEN D'AUTRE.
+//   Pas d'analyse SonarQube, pas de `mvn package`, pas de build ni de push
+//   d'image Docker, pas de deploiement.
+//
+// MAVEN / DEPOT DE DEPENDANCES :
+//   `./mvnw test -B --no-transfer-progress`, strictement aligne sur ce que fait
+//   le Dockerfile du service. AUCUN `-s settings.xml`, AUCUN mirror : ce projet
+//   n'a jamais eu de mecanisme de "contournement Nexus" (verifie : rien dans le
+//   depot hors un fichier IntelliJ gitignore sans rapport). Les dependances
+//   viennent de Maven Central, via le cache ~/.m2 du conteneur Jenkins — cache
+//   persiste par le volume nomme JENKINS_HOME, donc chaud des le 2e build.
+//
+// TESTCONTAINERS :
+//   Les tests d'identity-service demarrent un VRAI postgres:17.5-bookworm via
+//   Testcontainers. Le conteneur Jenkins doit donc avoir acces au socket Docker
+//   et resoudre `host.docker.internal` : les deux sont cables dans le fragment
+//   Compose rendu par le role Ansible `jenkins` (socket monte en lecture-ecriture
+//   + TESTCONTAINERS_HOST_OVERRIDE + extra_hosts host-gateway). Sans ce cablage,
+//   ce pipeline echoue au premier test — c'est attendu, pas un bug du script.
+// =============================================================================
+
+pipeline {
+    // Pas d'agent dedie dans cet increment : le build tourne sur le controleur.
+    // Le fragment Compose dimensionne mem_limit en consequence (1600m).
+    agent any
+
+    options {
+        // JENKINS_HOME vit dans un volume sur une machine a 8 Go : on borne
+        // l'historique conserve (coherent avec le BuildDiscarder du config.xml).
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        // Deux builds concurrents = deux JVM Maven + deux JVM Surefire dans la
+        // meme cgroup de 1600m => OOM kill garanti. On serialise.
+        disableConcurrentBuilds()
+        // Filet : un premier build telecharge Maven + tout le repo de deps.
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    environment {
+        // Heap de la JVM Maven bornee (meme discipline que les JVM du projet,
+        // cf. docs/architecture-decisions.md §4). La JVM forkee par Surefire
+        // reste container-aware et se borne sur mem_limit.
+        MAVEN_OPTS = '-Xmx256m'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                // `scm` = la configuration Git du job (miroir local file://,
+                // branche main). Aucun credential : rien a authentifier.
+                checkout scm
+            }
+        }
+
+        stage('Test') {
+            steps {
+                // Le Jenkinsfile est a la racine d'identity-service, mais le
+                // checkout ramene la RACINE DU DEPOT : on se place dans le
+                // module avant de lancer le wrapper.
+                dir('services/identity-service') {
+                    // Strictement la commande du Dockerfile (hors -DskipTests) :
+                    // -B = batch (pas de couleurs/prompts), --no-transfer-progress
+                    // = pas de barre de telechargement dans le log de build.
+                    sh './mvnw test -B --no-transfer-progress'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // Rend les resultats JUnit lisibles dans l'UI plutot que noyes dans
+            // le log. allowEmptyResults:false => un run qui ne produit AUCUN
+            // rapport est un echec, pas un "succes vide" trompeur.
+            junit allowEmptyResults: false,
+                  testResults: 'services/identity-service/target/surefire-reports/TEST-*.xml'
+        }
+    }
+}

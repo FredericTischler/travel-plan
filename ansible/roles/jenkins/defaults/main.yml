@@ -1,0 +1,164 @@
+---
+# roles/jenkins/defaults/main.yml
+#
+# Variables d'INFRASTRUCTURE du role jenkins (increment CI/CD n°1, MINIMAL).
+#
+# Modele operatoire identique aux autres roles du projet :
+#   Ansible PROVISIONNE et REND des fichiers ; docker-compose ORCHESTRE.
+#   Aucun `docker_container` en prod, aucun `docker compose up` depuis Ansible.
+#
+# PERIMETRE DE CET INCREMENT (assume, pas un oubli) :
+#   - UN controleur Jenkins, UN job Pipeline declenche A LA MAIN, qui build/teste
+#     identity-service (`./mvnw test`).
+#   - PAS de SonarQube (increment separe).
+#   - PAS de webhook / pollSCM / multibranch scan (declenchement manuel STRICT).
+#   - PAS de pipeline payment-service / travel-service.
+#   - PAS de build/push d'image Docker depuis Jenkins.
+#   - PAS d'agent Jenkins distinct : les builds tournent sur le controleur
+#     (cf. jenkins_mem_limit ci-dessous pour la consequence RAM).
+
+# --- Image (tag epingle, jamais latest) -------------------------------------
+# Tag verifie empiriquement : `docker run --rm jenkins/jenkins:2.568.3-lts-jdk21`
+# rapporte JENKINS_VERSION=2.568.3, Temurin 21 (JDK complet, pas un JRE) et
+# embarque deja git / curl / unzip / bash.
+# JDK 21 choisi pour etre ALIGNE sur identity-service (Dockerfile :
+# eclipse-temurin:21.0.7_6-jdk-noble) : le `./mvnw test` du job tourne donc sur
+# la meme majeure Java que le build applicatif. Un tag -jdk17 casserait cet
+# alignement (Spring Boot 3.4 compile en 21 ici).
+# `unzip` PRESENT est une dependance DURE : le `mvnw` de ce depot est un wrapper
+# shell artisanal (pas de maven-wrapper.jar) qui telecharge la distribution
+# Maven en .zip et l'extrait avec `unzip` (cf. commentaire du Dockerfile
+# identity-service). Sans unzip dans l'image, `./mvnw` echoue.
+jenkins_image: "jenkins/jenkins:2.568.3-lts-jdk21"
+
+# --- Service / conteneur rendu dans le fragment Compose ---------------------
+jenkins_service_name: "jenkins"
+jenkins_container_name: "travel-plan-jenkins"
+
+# --- RAM : ecart ASSUME vs les ~700 Mo de docs/architecture-decisions.md §8 --
+# §8 chiffre "Jenkins ~700 Mo" = le controleur AU REPOS. Ici les builds tournent
+# SUR le controleur (pas d'agent separe dans cet increment minimal) : il faut
+# donc loger, dans la meme cgroup, le controleur + la JVM Maven + la JVM forkee
+# par Surefire. 700m OOM-killerait le premier `mvn test`.
+#   controleur (-Xmx512m)        ~700 Mo RSS   <- conforme au chiffre §8
+#   JVM Maven  (MAVEN_OPTS)      ~300 Mo
+#   JVM Surefire forkee          ~400 Mo (container-aware : 25% de mem_limit)
+#   -------------------------------------------
+#   total                        ~1,4 Go  -> limite 1600m
+# Cet ecart est SOUTENABLE parce que le profil `ci` est explicitement "a la
+# demande, idealement quand la stack applicative est down" (§8) : les 1,6 Go ne
+# cohabitent pas avec les ~3,8 Go de la stack runtime.
+# NOTE : les conteneurs Testcontainers (postgres:17.5-bookworm) sont des
+# conteneurs FRERES sur le demon hote — ils ne comptent PAS dans cette limite
+# (compter ~250 Mo de plus a cote, sur l'hote).
+jenkins_mem_limit: "1600m"
+# Heap du controleur borne explicitement (meme discipline que les JVM du projet,
+# cf. §4 "-Xmx fixe sur CHAQUE JVM") : sans cela la JVM prendrait 25% de
+# mem_limit et laisserait moins de place aux JVM de build.
+jenkins_controller_max_heap: "512m"
+# Heap de la JVM Maven lancee par le job (borne pour la meme raison).
+jenkins_maven_max_heap: "256m"
+
+# --- Reseau -----------------------------------------------------------------
+# backend-net UNIQUEMENT :
+#   - c'est le reseau ou Traefik decouvre les services par labels (docs §4),
+#     donc le seul necessaire pour exposer l'UI Jenkins derriere la gateway ;
+#   - Jenkins n'a AUCUN besoin de data-net : il ne parle ni a postgres ni a
+#     vault ni a neo4j. Les bases Testcontainers du job sont des conteneurs
+#     ephemeres crees sur le demon HOTE, joints via host.docker.internal
+#     (cf. jenkins_testcontainers_host_override), pas via un reseau du projet.
+#   - il n'a pas non plus besoin de joindre le conteneur identity-service : le
+#     job ne teste pas le service DEPLOYE, il compile et teste les SOURCES.
+jenkins_backend_network: "backend-net"
+
+# --- Repertoire de rendu du fragment (surcharge en prod / molecule) ---------
+jenkins_compose_dir: "/opt/travel-plan/jenkins"
+
+# --- Persistance JENKINS_HOME ----------------------------------------------
+# Volume NOMME : la config Jenkins (utilisateur admin, plugins installes, jobs,
+# historique de builds, et le cache ~/.m2 du job) survit a `docker compose down`
+# / `up` et au redemarrage du conteneur. Sans lui, le wizard de premier
+# demarrage serait a rejouer a chaque cycle.
+jenkins_home_volume: "travel-plan-jenkins-home"
+# Port HTTP INTERNE du controleur (jamais publie sur l'hote : cf. README).
+jenkins_http_port: 8080
+
+# --- Acces au demon Docker (OBLIGATOIRE ici, cf. README "Decision securite") -
+# Les tests d'identity-service utilisent Testcontainers (PostgreSQLContainer) :
+# le job DOIT pouvoir creer des conteneurs. Le socket est donc monte en
+# LECTURE-ECRITURE — contrairement au role traefik ou :ro suffit.
+jenkins_docker_socket: "/var/run/docker.sock"
+# GID du groupe `docker` de l'HOTE, ajoute au process jenkins (uid 1000) via
+# `group_add` pour qu'il ait le droit d'ecrire sur le socket.
+# Vide => auto-decouvert par la tache getent (`getent group docker`).
+# A surcharger explicitement quand le controleur Ansible n'est pas l'hote Docker
+# cible, ou en Molecule (ou le groupe docker n'existe pas dans la plateforme).
+jenkins_docker_gid: ""
+
+# --- Testcontainers : reseau depuis un conteneur vers ses conteneurs freres --
+# Le job tourne DANS le conteneur Jenkins mais cree ses conteneurs de test sur
+# le demon de l'HOTE (socket monte). Testcontainers renvoie par defaut
+# `localhost` pour getHost() -> ce serait le conteneur Jenkins lui-meme, pas
+# l'hote ou le port du postgres de test est publie => connexion refusee.
+# TESTCONTAINERS_HOST_OVERRIDE + extra_hosts host-gateway corrigent ce point.
+jenkins_testcontainers_host_override: "host.docker.internal"
+
+# --- Exposition de l'UI : route Traefik (cf. README pour la justification) ---
+# Aucun port publie (convention du projet : seul Traefik publie, docs §4).
+jenkins_traefik_enabled: true
+jenkins_traefik_router_name: "jenkins"
+jenkins_traefik_host_rule: "jenkins.localhost"
+jenkins_traefik_entrypoint: "websecure"
+
+# === Source du code teste par le job ========================================
+# DECISION : clone Git depuis un MIROIR LOCAL du depot, monte en lecture seule.
+#
+# Pourquoi PAS le remote GitHub : `git remote -v` de ce depot pointe sur
+# git@github.com:... (SSH). Un clone depuis Jenkins exigerait une cle de deploie-
+# ment = un SECRET a stocker dans Jenkins. Vault n'est pas cable a Jenkins dans
+# cet increment => par contrat, on ne pose PAS de credential en clair et on ne
+# fabrique pas de placeholder. Le miroir local `file://` donne un VRAI
+# `checkout scm` (git plugin, branche, scriptPath) avec ZERO credential.
+#
+# Tradeoff assume : le job teste ce qui est COMMITE dans le checkout local, pas
+# ce qui est pousse sur GitHub. C'est exactement ce qu'on veut d'un declenchement
+# MANUEL en increment minimal ; le passage au remote + credential Vault est un
+# increment ulterieur (celui qui amenera aussi les webhooks, hors perimetre ici).
+#
+# CHEMIN ABSOLU sur l'hote, variable d'une machine a l'autre => OBLIGATOIRE en -e
+# (la tache d'assertion echoue fail-fast s'il est vide) :
+#   -e jenkins_scm_repo_host_path=/chemin/absolu/vers/le/checkout/travel-plan
+jenkins_scm_repo_host_path: ""
+
+# --- Corollaire NON EVIDENT du choix file:// (trouve empiriquement) ---------
+# Le git-plugin REFUSE par defaut tout remote pointant sur un repertoire local :
+#   "Checkout of Git remote 'file:///...' aborted because it references a local
+#    directory, which may be insecure."
+# Il faut lever explicitement le garde-fou par une propriete systeme JVM.
+# Ce que ce garde-fou protege, et donc ce qu'on accepte de perdre : sur un
+# Jenkins MULTI-UTILISATEUR, un utilisateur ayant le droit de configurer un job
+# pourrait ainsi faire lire au controleur n'importe quel repertoire local.
+# ACCEPTE ICI parce que : Jenkins solo, un seul compte admin, aucun job tiers,
+# et le seul repertoire local atteignable est un bind-mount LECTURE SEULE.
+# A REPASSER A false le jour ou le job clonera un vrai remote avec un
+# credential Vault (increment ulterieur).
+jenkins_allow_local_checkout: true
+# Point de montage (lecture seule) du miroir dans le conteneur Jenkins.
+jenkins_scm_mount_path: "/srv/travel-plan-repo"
+# URL SCM vue par le job (transport file:// vers le montage ci-dessus).
+jenkins_scm_url: "file://{{ jenkins_scm_mount_path }}"
+jenkins_scm_branch: "main"
+
+# --- Job Pipeline rendu (config.xml pret a POSTer, PAS cree par Ansible) ----
+# Ansible REND le config.xml ; il NE CREE PAS le job. Creer le job exigerait de
+# s'authentifier aupres de Jenkins => un secret (mot de passe admin / token API)
+# cote Ansible, avant que Vault ne soit cable a Jenkins. Contrat du projet :
+# on s'arrete et on le signale plutot que de poser un credential en clair.
+# La creation se fait donc par l'operateur, en UNE commande CLI documentee dans
+# le README, avec le mot de passe genere a l'execution (jamais commite).
+jenkins_job_name: "identity-service-test"
+jenkins_job_description: >-
+  Build + tests unitaires/integration d'identity-service (./mvnw test).
+  Declenchement MANUEL uniquement — aucun trigger SCM, aucun webhook.
+# Chemin du Jenkinsfile DANS le depot (relatif a la racine du checkout).
+jenkins_job_script_path: "services/identity-service/Jenkinsfile"

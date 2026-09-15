@@ -1,0 +1,215 @@
+---
+# verify.yml : assertions EXPLICITES (echoue si une garantie d'infra manque).
+# Pattern identique a postgres/neo4j/traefik : docker connection, assertions sur
+# les fichiers rendus dans /tmp de la plateforme Molecule.
+#
+# CHOIX DE METHODE : le fragment est PARSE (`from_yaml`) avant d'etre asserte,
+# pas grep-e. Une assertion textuelle sur un fichier bourre de commentaires est
+# fragile dans les deux sens (un commentaire qui cite "data-net" ferait passer
+# un "pas de data-net" pour un echec, et un `ports:` commente passerait pour
+# publie). On asserte donc la STRUCTURE reellement vue par Compose.
+#
+# PERIMETRE HONNETE : on verifie que le role rend les bons artefacts avec les
+# bonnes valeurs, ET que les interdits de l'increment sont STRUCTURELLEMENT
+# absents (pas de trigger, pas de port publie, pas de credential, pas d'autre
+# service). On ne prouve PAS ici que Jenkins demarre ni que le job passe : un
+# vrai demarrage (expansion du war ~90 s, wizard, installation des plugins) puis
+# un `mvn test` Testcontainers (Maven Central + pull postgres) ne tient pas dans
+# une boucle `molecule test` raisonnable et exigerait le reseau a chaque run.
+# C'est prouve hors Molecule, par la sequence rejouable du README du role.
+- name: Verify
+  hosts: all
+  gather_facts: false
+  vars:
+    jdir: /tmp/travel-plan-jenkins
+  tasks:
+
+    # =====================================================================
+    # 1) FRAGMENT COMPOSE — assertions STRUCTURELLES (YAML parse)
+    # =====================================================================
+    - name: "Read rendered compose fragment"
+      ansible.builtin.slurp:
+        src: "{{ jdir }}/compose.jenkins.yml"
+      register: fragment_b64
+
+    - name: "Parse the rendered fragment as YAML (assert on structure, not on text)"
+      ansible.builtin.set_fact:
+        frag: "{{ fragment_b64.content | b64decode | from_yaml }}"
+
+    - name: "Extract the jenkins service block"
+      ansible.builtin.set_fact:
+        svc: "{{ frag.services.jenkins }}"
+
+    - name: "Assert: UN SEUL service dans le fragment (rien d'autre n'a a y etre)"
+      ansible.builtin.assert:
+        that:
+          - "frag.services.keys() | list == ['jenkins']"
+        fail_msg: >-
+          Le fragment declare plus d'un service. Cet increment n'apporte QUE le
+          controleur Jenkins (ni SonarQube, ni base Sonar, ni agent).
+        success_msg: "Un seul service `jenkins` dans le fragment OK."
+
+    - name: "Assert: image EPINGLEE (jamais latest) et alignee JDK 21"
+      ansible.builtin.assert:
+        that:
+          - "svc.image == 'jenkins/jenkins:2.568.3-lts-jdk21'"
+          - "not svc.image.endswith(':latest')"
+        fail_msg: "L'image Jenkins n'est pas epinglee sur 2.568.3-lts-jdk21."
+        success_msg: "Image epinglee jenkins/jenkins:2.568.3-lts-jdk21 OK."
+
+    - name: "Assert: mem_limit borne + heap controleur borne explicitement"
+      ansible.builtin.assert:
+        that:
+          - "svc.mem_limit == '1600m'"
+          - "'-Xmx512m' in svc.environment.JAVA_OPTS"
+        fail_msg: "mem_limit / -Xmx du controleur absents ou non conformes."
+        success_msg: "mem_limit 1600m + heap controleur -Xmx512m OK."
+
+    - name: "Assert: JENKINS_HOME sur VOLUME NOMME (la config survit au conteneur)"
+      ansible.builtin.assert:
+        that:
+          - "'travel-plan-jenkins-home:/var/jenkins_home' in svc.volumes"
+          - "'travel-plan-jenkins-home' in (frag.volumes.keys() | list)"
+        fail_msg: >-
+          JENKINS_HOME n'est pas sur un volume nomme declare : le wizard, les
+          plugins, les jobs et le cache .m2 ne survivraient pas au conteneur.
+        success_msg: "JENKINS_HOME sur volume nomme travel-plan-jenkins-home OK."
+
+    - name: "Assert: cable sur backend-net UNIQUEMENT"
+      ansible.builtin.assert:
+        that:
+          - "svc.networks == ['backend-net']"
+          - "frag.networks['backend-net'].external | bool"
+        fail_msg: >-
+          Cablage reseau non conforme : backend-net seul attendu, declare
+          externe (les reseaux appartiennent a Ansible, pas a Compose).
+        success_msg: "Reseau backend-net seul, declare external OK."
+
+    # --- Convention du projet : SEUL Traefik publie un port ---------------
+    - name: "Assert: AUCUN port publie sur l'hote"
+      ansible.builtin.assert:
+        that:
+          - "'ports' not in svc"
+        fail_msg: >-
+          Le fragment publie un port : interdit, seul Traefik publie (docs §4).
+        success_msg: "Aucun port publie OK (UI joignable via la route Traefik)."
+
+    - name: "Assert: route Traefik complete (c'est CA qui rend l'UI joignable)"
+      ansible.builtin.assert:
+        that:
+          - "'traefik.enable=true' in svc.labels"
+          - "'traefik.docker.network=backend-net' in svc.labels"
+          - "'traefik.http.routers.jenkins.rule=Host(`jenkins.localhost`)' in svc.labels"
+          - "'traefik.http.routers.jenkins.entrypoints=websecure' in svc.labels"
+          - "'traefik.http.routers.jenkins.tls=true' in svc.labels"
+          - "'traefik.http.services.jenkins.loadbalancer.server.port=8080' in svc.labels"
+        fail_msg: "La route Traefik de l'UI Jenkins est incomplete."
+        success_msg: "Route Traefik jenkins.localhost (websecure/TLS, port 8080) OK."
+
+    # --- Le point de securite ACTE : socket en LECTURE-ECRITURE, assume ----
+    # Contrairement a traefik (:ro suffit), Testcontainers doit CREER des
+    # conteneurs : `:ro` rendrait le job structurellement impossible.
+    - name: "Assert: docker.sock monte en LECTURE-ECRITURE (ecart assume vs traefik)"
+      ansible.builtin.assert:
+        that:
+          - "'/var/run/docker.sock:/var/run/docker.sock' in svc.volumes"
+          - "'/var/run/docker.sock:/var/run/docker.sock:ro' not in svc.volumes"
+        fail_msg: >-
+          Le socket est monte en :ro — Testcontainers ne pourrait creer aucun
+          conteneur et le job echouerait structurellement.
+        success_msg: "Socket Docker en lecture-ecriture OK (exige par Testcontainers)."
+
+    - name: "Assert: group_add porte le GID docker resolu (sinon EACCES sur le socket)"
+      ansible.builtin.assert:
+        that:
+          - "svc.group_add | map('string') | list == ['999']"
+        fail_msg: >-
+          group_add absent ou faux : le process jenkins (uid 1000) n'aurait pas
+          le droit d'ecrire sur le socket Docker.
+        success_msg: "group_add avec le GID docker resolu ('999' en Molecule) OK."
+
+    - name: "Assert: cablage Testcontainers (host override + host-gateway + DOCKER_HOST)"
+      ansible.builtin.assert:
+        that:
+          - "svc.environment.TESTCONTAINERS_HOST_OVERRIDE == 'host.docker.internal'"
+          - "'host.docker.internal:host-gateway' in svc.extra_hosts"
+          - "svc.environment.DOCKER_HOST == 'unix:///var/run/docker.sock'"
+        fail_msg: >-
+          Cablage Testcontainers incomplet : getHost() renverrait `localhost`
+          (= le conteneur Jenkins lui-meme) et les tests echoueraient en
+          connexion refusee sur le port publie par le postgres de test.
+        success_msg: "Cablage Testcontainers (override + host-gateway) OK."
+
+    - name: "Assert: miroir SCM monte en LECTURE SEULE"
+      ansible.builtin.assert:
+        that:
+          - "'/srv/molecule/travel-plan:/srv/travel-plan-repo:ro' in svc.volumes"
+        fail_msg: "Le miroir du depot n'est pas monte en lecture seule."
+        success_msg: "Miroir du depot monte en :ro OK."
+
+    - name: "Assert: healthcheck HTTP sur /login"
+      ansible.builtin.assert:
+        that:
+          - "'healthcheck' in svc"
+          - "'http://localhost:8080/login' in (svc.healthcheck.test | join(' '))"
+        fail_msg: "Healthcheck absent ou non conforme."
+        success_msg: "Healthcheck HTTP /login OK."
+
+    # --- ZERO SECRET (assertion sur les VALEURS d'environnement) ----------
+    - name: "Assert: aucune variable d'environnement ne porte un secret"
+      ansible.builtin.assert:
+        that:
+          - "svc.environment.keys() | list | sort == ['DOCKER_HOST', 'JAVA_OPTS', 'TESTCONTAINERS_HOST_OVERRIDE']"
+        fail_msg: >-
+          Une variable d'environnement inattendue est presente : aucun
+          credential/token/mot de passe ne doit transiter par ce fragment.
+          Le mot de passe admin est genere par Jenkins dans JENKINS_HOME et lu
+          a l'execution, jamais rendu par Ansible.
+        success_msg: "Environnement limite a 3 variables non sensibles OK."
+
+    # =====================================================================
+    # 2) DEFINITION DU JOB — declenchement MANUEL prouve par le XML
+    # =====================================================================
+    - name: "Read rendered job config.xml"
+      ansible.builtin.slurp:
+        src: "{{ jdir }}/job-identity-service-test-config.xml"
+      register: job_b64
+
+    - name: "Set job config text"
+      ansible.builtin.set_fact:
+        job_cfg: "{{ job_b64.content | b64decode }}"
+
+    - name: "Assert job: Pipeline from SCM pointant sur le Jenkinsfile d'identity"
+      ansible.builtin.assert:
+        that:
+          - "'org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition' in job_cfg"
+          - "'hudson.plugins.git.GitSCM' in job_cfg"
+          - "'<url>file:///srv/travel-plan-repo</url>' in job_cfg"
+          - "'<name>*/main</name>' in job_cfg"
+          - "'<scriptPath>services/identity-service/Jenkinsfile</scriptPath>' in job_cfg"
+        fail_msg: "Le job ne pointe pas sur le Jenkinsfile d'identity-service via SCM."
+        success_msg: "Job Pipeline from SCM -> services/identity-service/Jenkinsfile OK."
+
+    # LE point non negociable de cet increment : declenchement MANUEL strict.
+    - name: "Assert job: <triggers/> VIDE (aucun webhook, aucun pollSCM, aucun timer)"
+      ansible.builtin.assert:
+        that:
+          - "'<triggers/>' in job_cfg"
+          - "'SCMTrigger' not in job_cfg"
+          - "'GitHubPushTrigger' not in job_cfg"
+          - "'TimerTrigger' not in job_cfg"
+          - "'<spec>' not in job_cfg"
+        fail_msg: >-
+          Un trigger est declare : cet increment exige un declenchement MANUEL
+          strict (webhooks et pollSCM = increments separes, a ne pas anticiper).
+        success_msg: "<triggers/> vide OK — declenchement manuel strict."
+
+    - name: "Assert job: zero credential, un seul service, aucune analyse qualite"
+      ansible.builtin.assert:
+        that:
+          - "'credentialsId' not in job_cfg"
+          - "'payment-service' not in job_cfg"
+          - "'travel-service' not in job_cfg"
+          - "'sonar' not in (job_cfg | lower)"
+        fail_msg: "Le job deborde du perimetre (credential / autre service / Sonar)."
+        success_msg: "Job : zero credential, identity-service seul, pas de Sonar OK."

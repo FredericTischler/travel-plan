@@ -7,10 +7,13 @@
 # PROFILS (cf. docs/architecture-decisions.md §4) :
 #   core : postgres + vault (dev quotidien, ~350 Mo, laisse place à IDE + navigateur)
 #   full : postgres + vault + neo4j (intégration + démo, IDE fermé)
+#   ci   : jenkins (+ traefik pour joindre son UI) — À LA DEMANDE (docs §8) :
+#          la stack CI ne cohabite PAS avec la stack applicative sur 8 Go.
 #
 # USAGE :
 #   docker compose --profile core up -d    # dev quotidien
 #   docker compose --profile full up -d    # stack complète
+#   docker compose --profile ci   up -d    # CI seule (stack applicative down)
 #   docker compose --profile full down     # nettoyage
 
 include:
@@ -21,6 +24,14 @@ include:
   # {{ assembly_compose_dir }}/traefik/). Inclus SANS flag conditionnel — contrairement
   # à identity, ce n'est pas un fragment statique optionnel du dépôt à chemin variable.
   - path: {{ assembly_traefik_fragment }}
+{% if assembly_jenkins_enabled %}
+  # jenkins : fragment RENDU par le rôle Ansible `jenkins` sous
+  # {{ assembly_compose_dir }}/jenkins/ — donc chemin RELATIF, comme postgres/
+  # vault/neo4j/traefik (et NON un chemin absolu comme identity/payment/travel).
+  # Gardé derrière un flag car les `include:` sont résolus quel que soit le
+  # --profile : sans le rôle joué, l'include casserait AUSSI core et full.
+  - path: {{ assembly_jenkins_fragment }}
+{% endif %}
 {% if assembly_identity_enabled %}
   # identity-service : fragment STATIQUE du dépôt (build depuis les sources),
   # référencé par CHEMIN ABSOLU (co-localisé avec Dockerfile + src/), pas rendu
@@ -62,8 +73,18 @@ services:
   # quotidien. Il doit donc rester dans "core" ; l'exclure rendrait la stack core
   # inaccessible de l'extérieur. Profils appliqués par merge sur le service inclus
   # (même mécanisme que postgres/vault ci-dessus).
+{% if assembly_jenkins_enabled %}
+  # `ci` AJOUTÉ à la liste (core/full inchangés) : l'UI Jenkins est exposée par
+  # une route Traefik (labels sur le service jenkins), donc `--profile ci` seul
+  # doit faire monter la gateway, sinon l'UI serait injoignable. Ajout émis
+  # UNIQUEMENT si assembly_jenkins_enabled=true => le rendu par défaut reste
+  # strictement identique à ce qu'il était.
+  traefik:
+    profiles: [core, full, ci]
+{% else %}
   traefik:
     profiles: [core, full]
+{% endif %}
 {% if assembly_identity_enabled %}
 
   # identity-service : profil [full] uniquement pour l'instant (pas core).
@@ -90,4 +111,16 @@ services:
   # sur le service inclus (même mécanisme que postgres/vault/neo4j ci-dessus).
   travel-service:
     profiles: [full]
+{% endif %}
+{% if assembly_jenkins_enabled %}
+
+  # jenkins : profil [ci] EXCLUSIVEMENT — jamais core, jamais full.
+  # docs/architecture-decisions.md §8 : Jenkins (~700 Mo au repos, 1,6 Go de
+  # mem_limit ici car les builds tournent sur le controleur) NE COHABITE PAS
+  # avec la stack applicative sur une machine à 8 Go. La CI se lance à la
+  # demande, idéalement stack applicative down, puis on l'arrête.
+  # Profils appliqués par merge sur le service inclus (même mécanisme que
+  # postgres/vault/neo4j ci-dessus).
+  jenkins:
+    profiles: [ci]
 {% endif %}

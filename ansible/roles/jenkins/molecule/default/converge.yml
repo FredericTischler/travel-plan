@@ -1,0 +1,20 @@
+---
+# Converge : joue le role jenkins dans le conteneur Debian (docker connection).
+# Pattern identique a postgres/neo4j/traefik : le role rend ses artefacts dans
+# /tmp de la plateforme Molecule, pas sur le controleur.
+- name: Converge
+  hosts: all
+  gather_facts: false
+  vars:
+    jenkins_compose_dir: /tmp/travel-plan-jenkins
+    # Chemin absolu bidon mais PLAUSIBLE : le role ne stat pas ce chemin (il
+    # n'existe qu'au moment ou Compose monte le bind), il le rend tel quel.
+    # Sa presence prouve que la garde fail-fast passe et que le bind-mount
+    # lecture seule est bien rendu.
+    jenkins_scm_repo_host_path: /srv/molecule/travel-plan
+    # GID epingle explicitement : la plateforme Debian n'a pas de groupe
+    # `docker`, et c'est exactement le cas "controleur Ansible != hote Docker".
+    # Couvre la branche "variable explicite" de la resolution du GID.
+    jenkins_docker_gid: "999"
+  roles:
+    - role: jenkins
