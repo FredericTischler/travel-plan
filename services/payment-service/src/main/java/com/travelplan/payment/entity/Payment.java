@@ -2,6 +2,8 @@ package com.travelplan.payment.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -66,16 +68,47 @@ public class Payment {
     @Column(name = "deleted_at", columnDefinition = "TIMESTAMPTZ")
     private OffsetDateTime deletedAt;
 
+    /**
+     * {@code provider} (V3__add_provider.sql) distinguishes where a payment
+     * originated. Stored as its enum name (STRING, not ORDINAL) so the column
+     * stays readable/stable regardless of future enum reordering.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "provider", nullable = false)
+    private PaymentProvider provider;
+
     protected Payment() {
         // required by JPA
     }
 
+    /**
+     * Manual payment (pre-existing path): always {@link PaymentProvider#MANUAL},
+     * no external reference at creation time.
+     */
     public Payment(UUID userId, BigDecimal amount, String currency) {
         this.userId = userId;
         this.amount = amount;
         this.currency = currency;
         this.status = STATUS_PENDING;
         this.createdAt = OffsetDateTime.now();
+        this.provider = PaymentProvider.MANUAL;
+    }
+
+    /**
+     * Provider-backed payment (Stripe/PayPal): {@code externalReference}
+     * carries the provider's own identifier for this payment — a Stripe
+     * PaymentIntent id or a PayPal Order id — so the row can be reconciled
+     * against the provider later (e.g. by a future webhook handler).
+     */
+    public Payment(UUID userId, BigDecimal amount, String currency, PaymentProvider provider,
+                   String externalReference) {
+        this.userId = userId;
+        this.amount = amount;
+        this.currency = currency;
+        this.status = STATUS_PENDING;
+        this.createdAt = OffsetDateTime.now();
+        this.provider = provider;
+        this.externalReference = externalReference;
     }
 
     public UUID getId() {
@@ -116,5 +149,9 @@ public class Payment {
 
     public void setDeletedAt(OffsetDateTime deletedAt) {
         this.deletedAt = deletedAt;
+    }
+
+    public PaymentProvider getProvider() {
+        return provider;
     }
 }

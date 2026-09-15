@@ -38,6 +38,24 @@ jwt:
   # PlaceholderResolutionException at startup.
   signing-key: ${JWT_SIGNING_KEY}
 
+stripe:
+  # Sandbox/test credentials only (sk_test_*) — see StripeConfig. Vault path
+  # secret/payment/stripe (keys api_key, secret_key). No default, no Vault
+  # client here — same fail-fast idiom as jwt.signing-key above: `${VAR}` with
+  # no ':' fails startup with PlaceholderResolutionException if absent.
+  # api-key is bound (and validated as present) for parity with the Vault
+  # path and a possible future client-side confirmation flow, but only
+  # secret-key is actually used to authenticate server-side calls today (see
+  # StripeConfig javadoc).
+  api-key: ${STRIPE_API_KEY}
+  secret-key: ${STRIPE_SECRET_KEY}
+
+paypal:
+  # Sandbox credentials only — see PayPalConfig. Vault path secret/payment/paypal
+  # (keys client_id, client_secret). Same fail-fast idiom as above.
+  client-id: ${PAYPAL_CLIENT_ID}
+  client-secret: ${PAYPAL_CLIENT_SECRET}
+
 cors:
   # Browser origins allowed to call this API (see CorsConfig). Not a secret —
   # a sensible default is fine here, unlike JWT_SIGNING_KEY/DB_* above.

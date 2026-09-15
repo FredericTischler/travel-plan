@@ -1,6 +1,7 @@
 package com.travelplan.payment;
 
 import com.travelplan.payment.support.TestJwtTokens;
+import com.travelplan.payment.support.TestProviderCredentials;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -63,6 +64,10 @@ class PaymentLifecycleIntegrationTest {
         registry.add("DB_USERNAME", postgres::getUsername);
         registry.add("DB_PASSWORD", postgres::getPassword);
         registry.add("JWT_SIGNING_KEY", () -> TestJwtTokens.SIGNING_KEY);
+        registry.add("STRIPE_API_KEY", () -> TestProviderCredentials.STRIPE_API_KEY);
+        registry.add("STRIPE_SECRET_KEY", () -> TestProviderCredentials.STRIPE_SECRET_KEY);
+        registry.add("PAYPAL_CLIENT_ID", () -> TestProviderCredentials.PAYPAL_CLIENT_ID);
+        registry.add("PAYPAL_CLIENT_SECRET", () -> TestProviderCredentials.PAYPAL_CLIENT_SECRET);
     }
 
     @Autowired

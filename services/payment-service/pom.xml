@@ -98,6 +98,26 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Stripe SDK (docs/sujet.md §2 — supported payment method). Creates
+             PaymentIntents only, sandbox/test keys (sk_test_*) — see
+             StripePaymentService. Latest stable release on Maven Central as of
+             writing (29.3.0-beta.1 exists but is a beta, intentionally skipped). -->
+        <dependency>
+            <groupId>com.stripe</groupId>
+            <artifactId>stripe-java</artifactId>
+            <version>29.2.0</version>
+        </dependency>
+
+        <!-- PayPal Server SDK (docs/sujet.md §2 — supported payment method).
+             Official successor to the deprecated com.paypal.sdk:checkout-sdk
+             artifact; creates Orders (v2 Orders API) only, sandbox environment
+             — see PayPalPaymentService. -->
+        <dependency>
+            <groupId>com.paypal.sdk</groupId>
+            <artifactId>paypal-server-sdk</artifactId>
+            <version>1.1.0</version>
+        </dependency>
+
         <!-- ===== TEST scope ===== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

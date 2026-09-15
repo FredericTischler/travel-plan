@@ -1,6 +1,7 @@
 package com.travelplan.payment.dto;
 
 import com.travelplan.payment.entity.Payment;
+import com.travelplan.payment.entity.PaymentProvider;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -21,9 +22,10 @@ public class PaymentResponse {
     private final String status;
     private final String externalReference;
     private final OffsetDateTime createdAt;
+    private final PaymentProvider provider;
 
     private PaymentResponse(UUID id, UUID userId, BigDecimal amount, String currency, String status,
-                             String externalReference, OffsetDateTime createdAt) {
+                             String externalReference, OffsetDateTime createdAt, PaymentProvider provider) {
         this.id = id;
         this.userId = userId;
         this.amount = amount;
@@ -31,6 +33,7 @@ public class PaymentResponse {
         this.status = status;
         this.externalReference = externalReference;
         this.createdAt = createdAt;
+        this.provider = provider;
     }
 
     public static PaymentResponse from(Payment payment) {
@@ -41,7 +44,8 @@ public class PaymentResponse {
                 payment.getCurrency(),
                 payment.getStatus(),
                 payment.getExternalReference(),
-                payment.getCreatedAt());
+                payment.getCreatedAt(),
+                payment.getProvider());
     }
 
     public UUID getId() {
@@ -70,5 +74,9 @@ public class PaymentResponse {
 
     public OffsetDateTime getCreatedAt() {
         return createdAt;
+    }
+
+    public PaymentProvider getProvider() {
+        return provider;
     }
 }
