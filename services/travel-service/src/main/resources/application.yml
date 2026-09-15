@@ -18,9 +18,17 @@ jwt:
   # HS256 signing secret used to VALIDATE tokens issued by identity-service.
   # Must be the exact same value as identity-service's own JWT_SIGNING_KEY
   # (shared HS256 secret — see JwtService javadoc). Env var ONLY — no
-  # default, no Vault client in this service. Fails startup if absent, same
-  # :? pattern as the NEO4J_* variables above.
-  signing-key: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
+  # default, no Vault client in this service. NO fallback value: `${VAR:?msg}`
+  # is Docker Compose syntax, not Spring — Spring reads everything after the
+  # first ':' as a literal DEFAULT VALUE, so that form silently resolved to
+  # the 28-char string "?JWT_SIGNING_KEY is required" (224 bits) whenever the
+  # env var was absent, instead of failing (this is exactly what broke this
+  # service's own boot in CI: JwtService builds the signing key eagerly in a
+  # @PostConstruct, so the weak fallback surfaced as a WeakKeyException here
+  # instead of the intended fail-fast). `${JWT_SIGNING_KEY}` with no ':' at
+  # all is the actual Spring fail-fast idiom: unresolved placeholder ->
+  # PlaceholderResolutionException at startup.
+  signing-key: ${JWT_SIGNING_KEY}
 
 cors:
   # Browser origins allowed to call this API (see CorsConfig). Not a secret —

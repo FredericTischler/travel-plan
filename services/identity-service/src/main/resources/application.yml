@@ -27,10 +27,15 @@ spring:
 
 jwt:
   # HS256 signing secret. Env var ONLY — no default, no Vault client in this
-  # service (see JwtService javadoc). Fails startup if absent, same :?
-  # pattern as the DB_* variables above. Must be >= 32 bytes (256 bits):
+  # service (see JwtService javadoc). NO fallback value: `${VAR:?msg}` is
+  # Docker Compose syntax, not Spring — Spring reads everything after the
+  # first ':' as a literal DEFAULT VALUE, so that form silently resolved to
+  # the 28-char string "?JWT_SIGNING_KEY is required" (224 bits) whenever the
+  # env var was absent, instead of failing. `${JWT_SIGNING_KEY}` with no ':'
+  # at all is the actual Spring fail-fast idiom: unresolved placeholder ->
+  # PlaceholderResolutionException at startup. Must be >= 32 bytes (256 bits):
   # jjwt itself rejects a shorter key with WeakKeyException (RFC 7518 §3.2).
-  signing-key: ${JWT_SIGNING_KEY:?JWT_SIGNING_KEY is required}
+  signing-key: ${JWT_SIGNING_KEY}
 
 payment-service:
   # Base URL identity-service uses to cascade a user soft-delete to

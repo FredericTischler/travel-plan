@@ -1,5 +1,6 @@
 package com.travelplan.travel;
 
+import com.travelplan.travel.support.TestJwtTokens;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,8 +24,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Uses Testcontainers to spin up a real Neo4j instance (same image as
  * production: neo4j:5.26.6-community, cf. ansible/roles/neo4j/defaults/main.yml).
  * DynamicPropertySource injects NEO4J_HOST/NEO4J_PORT/NEO4J_USERNAME/NEO4J_PASSWORD
- * so that the :? fail-fast guards in application.yml are satisfied without
- * requiring an external Docker Compose stack — same pattern as
+ * and JWT_SIGNING_KEY, satisfying application.yml's required placeholders
+ * without requiring an external Docker Compose stack — same pattern as
  * payment-service's PaymentServiceApplicationTests.
  *
  * This test validates:
@@ -50,6 +51,10 @@ class TravelServiceApplicationTests {
         registry.add("NEO4J_PORT", () -> String.valueOf(neo4j.getMappedPort(7687)));
         registry.add("NEO4J_USERNAME", () -> "neo4j");
         registry.add("NEO4J_PASSWORD", neo4j::getAdminPassword);
+        // /actuator/health doesn't require auth, but JwtService still builds
+        // its signing key eagerly at startup (@PostConstruct), so the
+        // placeholder must resolve regardless.
+        registry.add("JWT_SIGNING_KEY", () -> TestJwtTokens.SIGNING_KEY);
     }
 
     @Autowired
