@@ -1,11 +1,12 @@
 package com.travelplan.identity.service;
 
+import com.travelplan.identity.filter.RequestIdFilter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.http.client.ClientHttpRequestFactoryBuilder;
 import org.springframework.boot.http.client.ClientHttpRequestFactorySettings;
-import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -52,12 +53,24 @@ public class PaymentServiceClient {
     /**
      * Soft-delete every active payment belonging to {@code userId} in
      * payment-service. Failures are logged and swallowed — see class javadoc.
+     *
+     * <p>Propagates the current request's {@code X-Request-Id} (read from the
+     * MDC, set by {@link RequestIdFilter} on the way in) to payment-service,
+     * so the cascade-delete call keeps the trace continuous across both
+     * services. If there is no current requestId (e.g. call not triggered by
+     * an HTTP request), the header is simply omitted.</p>
      */
     public void deleteAllPaymentsForUser(UUID userId) {
         try {
             restClient.delete()
                     .uri("/payments/by-user/{userId}", userId)
-                    .header(HttpHeaders.AUTHORIZATION, "Bearer " + jwtService.generateServiceToken())
+                    .headers(headers -> {
+                        headers.setBearerAuth(jwtService.generateServiceToken());
+                        String requestId = MDC.get(RequestIdFilter.MDC_KEY);
+                        if (requestId != null) {
+                            headers.add(RequestIdFilter.REQUEST_ID_HEADER, requestId);
+                        }
+                    })
                     .retrieve()
                     .toBodilessEntity();
         } catch (RestClientException ex) {
