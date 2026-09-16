@@ -240,7 +240,7 @@ qui rend la suite **vivable plutôt qu'impossible**. Voici l'addition, estimatio
 | Neo4j (JVM) | ~600 Mo–1 Go | Heap 512m + page cache ~256m ; **plus gros poste variable**. |
 | PostgreSQL (1 instance, 2 bases) | ~250 Mo | identity + payment. |
 | Vault (dev mode) | ~60 Mo | En mémoire. |
-| Loki + Promtail | ~180 Mo | Optionnel (§7). |
+| Loki + Promtail + Grafana | **~450 Mo mesurés** | Optionnel, profil dédié (§7). Estimation initiale ~180 Mo : elle **oubliait Grafana**, qui pèse à lui seul 336 Mo à vide (runtime Node de rendu serveur en plus du binaire Go). |
 | **Total stack au repos** | **~3,8 Go** | Stack runtime seule, rien de scalé. |
 
 **La conclusion « ~4,5 Go libres » de la version précédente était FAUSSE en contexte
@@ -289,7 +289,7 @@ permanence ». On découpe via **profils Docker Compose** :
 |---|---|---|
 | **core** | traefik + identity + postgres + **le seul service en cours de dev** ; Neo4j et les autres JVM restent à terre. | **Mode dev QUOTIDIEN** — ~1,5 Go, laisse la place à IDE + navigateur. |
 | **full** | tout up | Tests d'intégration + répétition de démo, **IDE fermé**. |
-| **observability** | Loki / Promtail | **OFF par défaut** (confirme §7). |
+| **observability** | Loki + Promtail + **Grafana** | **OFF par défaut**, **additif** : `--profile full --profile observability`. ~450 Mo **mesurés** (§7, livré). |
 | **ci** | Jenkins / SonarQube | À la demande — **même mécanisme de profil** que §8. |
 
 - **Neo4j est le plus gros poste variable** (~600 Mo–1 Go) : inutile up pour bosser sur
@@ -453,17 +453,71 @@ centralisée et déléguée (la phrase de résilience de §1 est corrigée en co
 
 ---
 
-## 7. Logging / tracing (exigence sujet + grille)
+## 7. Logging / tracing (exigence sujet + grille) — **IMPLÉMENTÉ ET VÉRIFIÉ**
+
+> **Statut : ce n'est plus une intention, c'est un mécanisme qui tourne.** Cette section
+> décrivait une décision à venir ; elle décrit désormais ce qui est livré et prouvé.
+> Détail complet, mesures et procédures : `ansible/roles/observability/README.md`.
 
 - **Exigence** : « track and trace a request across multiple services ».
 - **Décision** : logs structurés JSON par service + **corrélation par `X-Request-Id`**
-  (propagé par Traefik et porté de service en service), agrégés par **Grafana Loki + Promtail**.
+  (porté de service en service), agrégés par **Grafana Loki + Promtail**.
 - **Tradeoff / sacrifice** : **ELK écarté** (Elasticsearch seul mange >1 Go sur une machine à 8 Go).
   Loki/Promtail est nettement plus léger. On sacrifie la richesse de recherche d'ELK contre la
   faisabilité RAM. Le critère grille (« tracer une requête à travers les services ») reste rempli
   grâce à la corrélation par ID.
-- **MVP minimal** si même Loki pèse trop à la démo : logs JSON sur stdout + `docker compose logs`
-  filtrés par `X-Request-Id`. Le rôle Ansible `observability` rend Loki optionnel.
+
+### Ce qui est livré
+
+| Étage | Où |
+|---|---|
+| **Émission** — JSON sur stdout (`logstash-logback-encoder`), `requestId` en MDC | `services/*/src/main/resources/logback-spring.xml` + `.../filter/RequestIdFilter.java` |
+| **Propagation** — en-tête `X-Request-Id` sur l'appel en cascade identity → payment | `PaymentServiceClient` |
+| **Collecte / stockage / consultation** | rôle Ansible **`observability`** : Promtail → Loki → Grafana |
+
+Promtail découvre les conteneurs **via l'API Docker** (socket en lecture seule, même
+arbitrage de sécurité que Traefik) avec une **liste blanche** sur les conteneurs
+applicatifs. **Loki et Promtail ne publient aucun port et ne sont routés par rien** :
+l'API de Loki n'a aucune authentification (`auth_enabled: false` n'est pas un contrôle
+d'accès mais un séparateur de locataires), ils vivent donc sur un réseau `internal`.
+Le seul accès humain aux logs est **Grafana**, derrière Traefik (`grafana.localhost`)
+et derrière une authentification.
+
+### Preuve bout-en-bout (résultat réel, pas une intention)
+
+Un `DELETE /users/{id}` déclenchant la cascade identity → payment, émis avec un
+`X-Request-Id` connu, puis interrogé en LogQL :
+
+```logql
+{job="travel-plan"} | json | requestId=`cascade-…-corr`
+```
+
+→ **10 lignes retournées, réparties sur les deux services**, reconstituant la cascade
+dans l'ordre : `DELETE /users/…` (identity) → `DELETE /payments/by-user/…` (payment) →
+`Completed 200 OK` (payment) → `Completed 204 NO_CONTENT` (identity).
+
+### Deux limites connues, nommées plutôt que masquées
+
+1. **À niveau `INFO`, une requête nominale n'écrit aucune ligne de log.** Le `requestId`
+   est bien dans le MDC, mais aucun code applicatif n'émet de log pendant une requête
+   réussie — et un MDC sans instruction de log ne produit rien. La corrélation ci-dessus
+   n'a été observable qu'avec `LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB=DEBUG`. La plomberie
+   est démontrée correcte ; ce qui manque, ce sont des **logs métier côté applicatif**.
+2. **Les images applicatives doivent être reconstruites.** Toute image antérieure à
+   l'ajout de `logback-spring.xml` sort du texte brut : Promtail la collecte, mais
+   `| json | requestId=…` ne filtre rien.
+
+### Profil Compose dédié (budget mesuré)
+
+Stack mesuré à **~450 Mo** (Loki 84 Mo + Promtail 31 Mo + Grafana 336 Mo) — trois binaires
+Go, **aucune JVM**, ce qui est précisément ce qui le rend finançable. Il a son **propre
+profil `observability`**, **additif** : `--profile full --profile observability` ≈ 2,15 Go,
+tandis que `full` + `ci` + `observability` ≈ 5,9 Go ne laisserait plus rien à l'IDE.
+D'où trois profils composables plutôt qu'un gros profil « tout ».
+
+Le **MVP de repli** (logs JSON + `docker compose logs` filtrés par `X-Request-Id`) reste
+valable si la RAM manque le jour de la démo : le profil dédié permet de ne simplement pas
+monter le stack.
 
 ---
 

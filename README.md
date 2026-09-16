@@ -15,8 +15,9 @@ sujet mais absent ou partiel est regroupé — et uniquement regroupé — dans 
 
 ```
 services/        3 services Spring Boot + le front Angular
-ansible/roles/   8 rôles de provisionnement (1 rôle = 1 responsabilité)
-ci/              Jenkins / SonarQube — README uniquement, aucune config écrite
+ansible/roles/   10 rôles de provisionnement (1 rôle = 1 responsabilité)
+ci/              Jenkins / SonarQube — README uniquement ; la config réelle est
+                 rendue par les rôles Ansible `jenkins` et `sonarqube`
 docs/            Sujet, grille d'audit, décisions d'architecture
 ```
 
@@ -52,6 +53,8 @@ Modèle opératoire : **Ansible provisionne et rend des fragments Compose**,
 | `traefik` | La gateway : **seul rôle publiant un port** (443) et seul à chevaucher `edge-net` + `backend-net`. Rend la config statique (entrypoint `websecure`, provider Docker avec `exposedByDefault: false`, provider file, endpoint `ping`), la config dynamique TLS, et génère un certificat auto-signé (mkcert si présent, sinon openssl ; idempotent via `creates:`). Socket Docker monté en lecture seule (`:ro`). Dashboard Traefik désactivé par défaut. |
 | `compose-assembly` | Crée les 3 réseaux bridge via `community.docker.docker_network` (Ansible en est propriétaire, les fragments les déclarent `external: true`) et rend le `docker-compose.yml` top-level qui assemble les fragments via `include:` et applique les profils. |
 | `jenkins` | Le contrôleur CI (profil Compose `ci`) : rend `compose.jenkins.yml` (image épinglée, volume nommé pour `JENKINS_HOME`, `backend-net`, aucun port publié, route Traefik par labels) et provisionne 3 jobs Pipeline déclenchés à la main, un par service. |
+| `sonarqube` | Le serveur d'analyse qualité (profil Compose `ci`, le même que `jenkins`) : rend `compose.sonarqube.yml` déclarant SonarQube Community **et sa propre base Postgres dédiée** (conteneur, volume et réseau distincts de la Postgres applicative, sur un réseau `internal`), les **trois** heaps JVM bornées explicitement (Web + Compute Engine + Elasticsearch embarqué vivent dans la même cgroup), aucun port publié, route Traefik sur `sonarqube.localhost`. Pose aussi sur l'**hôte** les sysctl exigés par l'Elasticsearch embarqué (`vm.max_map_count`, `fs.file-max`) : non namespacés, donc impossibles à poser depuis Compose. Ne crée **aucun** token et ne configure rien via l'API authentifiée (procédure manuelle documentée). |
+| `observability` | Le logging centralisé (profil Compose dédié `observability`) : rend les configs **Loki** (monolithique, stockage filesystem, schéma TSDB v13, rétention 7 j avec compactor actif), **Promtail** (découverte par l'API Docker, socket en lecture seule, liste blanche sur les conteneurs applicatifs, extraction du JSON émis par les services) et la **datasource Grafana** pré-provisionnée, plus le fragment Compose des 3 conteneurs. Loki et Promtail vivent sur un réseau `internal`, **sans port ni route** : l'API de Loki n'a aucune authentification, le seul accès humain aux logs est Grafana (`grafana.localhost`). |
 
 ### Réseaux
 
@@ -70,7 +73,8 @@ Aucun conteneur hors Traefik ne publie de port vers l'hôte.
 |---|---|
 | `core` | `postgres`, `vault`, `traefik` |
 | `full` | `core` + `neo4j` + les services applicatifs activés |
-| `ci` | `jenkins` (inclus seulement si `assembly_jenkins_enabled=true`, `false` par défaut) |
+| `ci` | `jenkins` + `sonarqube` + sa base (inclus seulement si les flags `assembly_*_enabled` correspondants sont à `true`, `false` par défaut) |
+| `observability` | `loki` + `promtail` + `grafana` — **additif** aux autres : `--profile full --profile observability`. ~450 Mo mesurés. |
 
 Neo4j (poste RAM le plus lourd) est exclu de `core`. Les trois services applicatifs
 sont en profil `full` uniquement.
@@ -298,7 +302,29 @@ attendent et qui est **absent ou partiel** dans le dépôt aujourd'hui.
   Compose `ci`) et 3 jobs Pipeline, un par service, jouant `./mvnw test`. Ils sont
   **déclenchés à la main** : pas de webhook, pas de build d'image, pas de
   déploiement. `ci/jenkins/` ne contient toujours qu'un README placeholder.
-- **SonarQube : absent.** `ci/sonarqube/` ne contient qu'un README placeholder.
+- ~~**SonarQube : absent.**~~ **Corrigé — SonarQube tourne et analyse réellement.**
+  Le rôle Ansible `sonarqube` provisionne un serveur Community Edition + sa base
+  Postgres **dédiée** (profil Compose `ci`, route Traefik `sonarqube.localhost`,
+  aucun port publié). Les 3 `pom.xml` embarquent `sonar-maven-plugin` (version
+  **épinglée**), et les 3 `Jenkinsfile` ont deux stages : analyse puis **relecture
+  du quality gate via l'API REST** — indispensable, le scanner rend la main
+  *avant* que le gate soit calculé, donc un `sonar:sonar` vert ne dit rien à lui
+  seul.
+  **Analyse réelle exécutée sur `identity-service`** : tâche Compute Engine
+  `SUCCESS`, **quality gate `OK`**, 825 ncloc, **0 bug, 0 vulnérabilité,
+  7 code smells** (4 MAJOR, 3 INFO), 0 % de duplication.
+  *Deux précisions honnêtes* : (1) le gate « Sonar way » ne porte que sur le
+  **new code**, or à la première analyse il n'y a pas encore de période de
+  référence — la liste `conditions` est donc **vide** et le `OK` est obtenu par
+  absence de condition ; (2) la **couverture est à 0 %** (JaCoCo n'est branché
+  nulle part), ce qui **fera échouer** le gate dès la deuxième analyse. Limites
+  connues, pas un test truqué. Détail : `ansible/roles/sonarqube/README.md`.
+- **Le token Sonar n'est ni dans le dépôt ni provisionné par Ansible** : Vault
+  n'est pas câblé à la chaîne CI, et le contrat du projet interdit autant le
+  credential en clair que le placeholder « temporaire ». Procédure manuelle
+  documentée (génération API + dépôt dans le credential store de Jenkins sous
+  l'ID `sonarqube-token`). Les stages Sonar sont **conditionnels** : sans la
+  variable `SONAR_HOST_URL`, les pipelines tournent sans analyse au lieu d'échouer.
 - Aucun pipeline de build/déploiement automatisé, donc aucune exécution de tests
   déclenchée par une PR.
 
@@ -365,18 +391,40 @@ attendent et qui est **absent ou partiel** dans le dépôt aujourd'hui.
   les trois services applicatifs tournent à **2 réplicas par défaut**, Traefik
   équilibre le trafic entre elles et retire une instance morte du pool. Voir
   [Réplicas & load balancing](#réplicas--load-balancing) pour le détail et la preuve.
-- **Pas de logging traçable inter-services.** Aucun `X-Request-Id`, aucune
-  corrélation, aucun MDC, et ni Loki ni Promtail ne sont provisionnés — alors que la
-  grille d'audit vérifie explicitement la traçabilité d'une requête à travers les
-  services.
+- ~~**Pas de logging traçable inter-services.**~~ **Corrigé — la traçabilité
+  inter-services fonctionne et a été vérifiée.** Les 3 services émettent des logs
+  **JSON** sur stdout (`logstash-logback-encoder`) portant un `requestId` en MDC
+  (`RequestIdFilter`, en-tête `X-Request-Id`), propagé sur l'appel en cascade
+  identity → payment. Le rôle Ansible **`observability`** provisionne
+  **Promtail → Loki → Grafana** (profil Compose dédié `observability`).
+  **Preuve réelle** : un `DELETE /users/{id}` déclenchant la cascade, émis avec un
+  `X-Request-Id` connu, puis la requête LogQL
+  `{job="travel-plan"} | json | requestId=\`…\`` retourne **10 lignes réparties
+  sur les deux services**, reconstituant la cascade dans l'ordre
+  (`DELETE /users/…` → `DELETE /payments/by-user/…` → `Completed 200 OK` →
+  `Completed 204 NO_CONTENT`).
+  **Deux limites nommées** : (1) à niveau `INFO` une requête nominale n'écrit
+  **aucune** ligne — un MDC sans instruction de log ne produit rien, la
+  corrélation n'a été observable qu'avec
+  `LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_WEB=DEBUG` ; il manque donc des **logs
+  métier** côté applicatif. (2) Toute image de service construite **avant**
+  l'ajout de `logback-spring.xml` sort du texte brut : Promtail la collecte, mais
+  rien n'est corrélable — **les images applicatives doivent être reconstruites**.
+  Détail complet : `ansible/roles/observability/README.md`.
 - **Le dashboard n'est pas conteneurisé** : pas de Dockerfile, pas de fragment
   Compose, pas de route Traefik. Il ne tourne aujourd'hui que via `ng serve`
   (`http://localhost:4200`, autorisé par la config CORS des services).
 - **`payment-service` et `travel-service` désactivés par défaut** dans l'assemblage
   Compose (`assembly_payment_enabled` / `assembly_travel_enabled` à `false`) : seule
   l'intégration d'`identity-service` est considérée prouvée bout-en-bout.
-- Pas de rôle `observability`, pas de rôle `common` (tous deux annoncés dans
-  `ansible/README.md`, aucun des deux n'existe).
+- ~~Pas de rôle `observability`~~ → **le rôle `observability` existe et est testé**
+  (Loki + Promtail + Grafana, scénario Molecule complet : 28 assertions,
+  idempotence `changed=0`). Il reste **à inclure dans le Compose assemblé** :
+  `compose-assembly` est un autre rôle, et cet ajout — un `include:` derrière un
+  flag, un merge `profiles: [observability]`, et l'ajout de `observability` à la
+  liste de profils de `traefik` pour que la route Grafana soit servie — fera
+  l'objet d'un incrément dédié. Même remarque pour le rôle `sonarqube`.
+- Pas de rôle `common` (annoncé dans `ansible/README.md`, n'existe pas).
 - **Pas de Kubernetes** (bonus du sujet) : aucun manifeste, aucun chart. Choix assumé
   (contrainte 8 Go, Compose seul).
 

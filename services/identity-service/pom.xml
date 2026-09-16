@@ -31,6 +31,15 @@
     </properties>
 
     <dependencies>
+        <!-- JSON structured logging on stdout (see resources/logback-spring.xml).
+             9.0 — latest stable, compatible with the Logback 1.5.x / SLF4J 2.x
+             shipped by the spring-boot-starter-parent 3.4.3 BOM. -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>9.0</version>
+        </dependency>
+
         <!-- Web (Actuator /actuator/health) -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -141,6 +150,22 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+            <!-- SonarQube analysis (`mvn sonar:sonar`, invoked by the Jenkins
+                 pipeline after `verify`). Version PINNED: without it Maven would
+                 resolve the newest release from Central at build time, so two
+                 builds of the same commit could use two different scanners.
+                 5.8.0.7211 = current release on Maven Central; requires Java 17+
+                 (this module builds on 21) and works with SonarQube 2025.1+/26.x.
+                 The server URL and the token are NOT set here: they are
+                 environment-specific and the token is a secret — both are passed
+                 on the command line by the pipeline (SONAR_HOST_URL/SONAR_TOKEN).
+                 See ansible/roles/sonarqube/README.md. -->
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>5.8.0.7211</version>
             </plugin>
 
         </plugins>

@@ -14,8 +14,12 @@
 //   ou via l'API REST / `jenkins-cli build`.
 //
 // CE QUE CE PIPELINE FAIT : checkout + `./mvnw test`. RIEN D'AUTRE.
-//   Pas d'analyse SonarQube, pas de `mvn package`, pas de build ni de push
-//   d'image Docker, pas de deploiement.
+//   Pas de build ni de push d'image Docker, pas de deploiement.
+//   L'analyse SonarQube A ETE AJOUTEE (increment qualite) : deux stages
+//   CONDITIONNELS, actifs seulement si la variable globale Jenkins
+//   SONAR_HOST_URL est posee et si le credential `sonarqube-token`
+//   existe — les deux creees MANUELLEMENT (procedure :
+//   ansible/roles/sonarqube/README.md). Aucun token dans ce depot.
 //
 // MAVEN / DEPOT DE DEPENDANCES :
 //   `./mvnw test -B --no-transfer-progress`, aligne sur le Dockerfile du service
@@ -82,6 +86,93 @@ pipeline {
                     // = pas de barre de telechargement dans le log de build.
                     sh './mvnw test -B --no-transfer-progress'
                 }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Analyse SonarQube.
+        //
+        // CONDITIONNEE, PAS OPTIONNELLE PAR CONFORT : le serveur SonarQube
+        // appartient au profil Compose `ci` et n'est donc PAS toujours la
+        // (docs/architecture-decisions.md §8 : la stack CI se lance a la
+        // demande sur une machine a 8 Go). `when` evite de faire echouer
+        // tout le pipeline quand seule la partie test est voulue.
+        //
+        // SONAR_HOST_URL : variable globale Jenkins (Manage Jenkins >
+        // System > Global properties), a poser MANUELLEMENT. Valeur
+        // attendue depuis le conteneur Jenkins : http://sonarqube:9000
+        // (nom de service Compose sur backend-net) — PAS l'URL Traefik
+        // https://sonarqube.localhost, dont le certificat auto-signe
+        // n'est pas dans le truststore de la JVM du scanner.
+        //
+        // SONAR_TOKEN : credential Jenkins de type "Secret text", d'ID
+        // `sonarqube-token`, cree MANUELLEMENT (procedure dans
+        // ansible/roles/sonarqube/README.md). Aucun token n'est ecrit
+        // dans ce depot ni provisionne par Ansible : Vault n'est pas
+        // cable a la chaine CI dans cet increment, et le contrat du
+        // projet interdit le placeholder "temporaire".
+        //
+        // Pas de `withSonarQubeEnv` / `waitForQualityGate` : ces steps
+        // viennent du plugin Jenkins SonarQube Scanner, qui n'est PAS
+        // installe (le role `jenkins` provisionne un jeu de plugins
+        // ferme). Le quality gate est donc relu via l'API REST, ci-dessous.
+        stage('SonarQube analysis') {
+            when {
+                expression { return env.SONAR_HOST_URL?.trim() }
+            }
+            environment {
+                SONAR_TOKEN = credentials('sonarqube-token')
+            }
+            steps {
+                dir('services/payment-service') {
+                    // `verify -DskipTests` : sonar:sonar a besoin des classes
+                    // compilees ET du packaging ; les tests viennent d'etre
+                    // joues au stage precedent, on ne les rejoue pas (deux
+                    // Testcontainers de suite dans 1600m de cgroup = OOM).
+                    sh '''
+                        ./mvnw verify sonar:sonar -B --no-transfer-progress \
+                          -DskipTests \
+                          -Dsonar.host.url="$SONAR_HOST_URL" \
+                          -Dsonar.token="$SONAR_TOKEN" \
+                          -Dsonar.projectKey=travel-plan-payment-service \
+                          -Dsonar.projectName="Travel-Plan Payment Service"
+                    '''
+                }
+            }
+        }
+
+        // Relecture du quality gate par l'API REST. Le scanner rend la main
+        // DES que le rapport est televerse : c'est le Compute Engine du
+        // serveur qui calcule ensuite les issues et le gate, de facon
+        // ASYNCHRONE. Sans cette attente, un `sonar:sonar` vert ne dit
+        // strictement rien de la qualite du code.
+        stage('Quality gate') {
+            when {
+                expression { return env.SONAR_HOST_URL?.trim() }
+            }
+            environment {
+                SONAR_TOKEN = credentials('sonarqube-token')
+            }
+            steps {
+                // curl est present dans l'image jenkins/jenkins:lts (base
+                // Debian). `set -e` + test explicite sur la valeur : un
+                // status ERROR fait echouer le build, comme attendu.
+                sh '''
+                    set -e
+                    key=travel-plan-payment-service
+                    for i in $(seq 1 60); do
+                      status=$(curl -sf -u "$SONAR_TOKEN:" \
+                        "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$key" \
+                        | sed -n 's/.*"projectStatus":{"status":"\([A-Z_]*\)".*/\1/p')
+                      case "$status" in
+                        OK)    echo "Quality gate: OK"; exit 0 ;;
+                        ERROR) echo "Quality gate: ERROR"; exit 1 ;;
+                        *)     echo "Quality gate pas encore calcule ($status), attente..."; sleep 5 ;;
+                      esac
+                    done
+                    echo "Timeout: le Compute Engine n a pas rendu de quality gate en 5 min"
+                    exit 1
+                '''
             }
         }
     }
