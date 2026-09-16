@@ -49,6 +49,15 @@ stripe:
   # StripeConfig javadoc).
   api-key: ${STRIPE_API_KEY}
   secret-key: ${STRIPE_SECRET_KEY}
+  # Signing secret for POST /webhooks/stripe (Stripe dashboard -> webhook
+  # endpoint -> "Signing secret", whsec_*). NOT YET provisioned via
+  # Ansible/Vault/docker-compose as of this increment — this is application
+  # code only; wiring STRIPE_WEBHOOK_SECRET through Vault (secret/payment/stripe,
+  # key webhook_secret) and docker-compose.payment.yml is a separate infra
+  # task. Same fail-fast idiom as the other stripe.*/paypal.* keys above:
+  # `${VAR}` with no ':' fails startup with PlaceholderResolutionException if
+  # absent — never a silent default for a secret.
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET}
 
 paypal:
   # Sandbox credentials only — see PayPalConfig. Vault path secret/payment/paypal

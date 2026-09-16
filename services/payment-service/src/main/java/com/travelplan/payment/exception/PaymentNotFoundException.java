@@ -11,4 +11,14 @@ public class PaymentNotFoundException extends RuntimeException {
     public PaymentNotFoundException(UUID id) {
         super("Payment not found: " + id);
     }
+
+    /**
+     * Used when the lookup key is a provider-side external reference (a
+     * Stripe PaymentIntent id or a PayPal Order id) rather than this
+     * service's own payment id — see
+     * {@link com.travelplan.payment.service.PayPalPaymentService#captureOrder}.
+     */
+    public PaymentNotFoundException(String externalReference) {
+        super("Payment not found for external reference: " + externalReference);
+    }
 }

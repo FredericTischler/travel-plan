@@ -5,16 +5,21 @@ import com.paypal.sdk.exceptions.ApiException;
 import com.paypal.sdk.http.response.ApiResponse;
 import io.apimatic.core.exceptions.AuthValidationException;
 import com.paypal.sdk.models.AmountWithBreakdown;
+import com.paypal.sdk.models.CaptureOrderInput;
 import com.paypal.sdk.models.CheckoutPaymentIntent;
 import com.paypal.sdk.models.CreateOrderInput;
 import com.paypal.sdk.models.LinkDescription;
 import com.paypal.sdk.models.Order;
 import com.paypal.sdk.models.OrderRequest;
+import com.paypal.sdk.models.OrderStatus;
 import com.paypal.sdk.models.PurchaseUnitRequest;
 import com.travelplan.payment.dto.CreatePayPalPaymentRequest;
 import com.travelplan.payment.dto.PayPalPaymentResponse;
+import com.travelplan.payment.dto.PaymentResponse;
 import com.travelplan.payment.entity.Payment;
 import com.travelplan.payment.entity.PaymentProvider;
+import com.travelplan.payment.exception.PaymentAlreadyTerminalException;
+import com.travelplan.payment.exception.PaymentNotFoundException;
 import com.travelplan.payment.exception.PaymentProviderException;
 import com.travelplan.payment.repository.PaymentRepository;
 import org.springframework.stereotype.Service;
@@ -25,30 +30,43 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.Currency;
 import java.util.List;
+import java.util.Set;
 
 /**
- * Creates PayPal Orders (docs/sujet.md §2 — PayPal support).
+ * Creates PayPal Orders and captures them after payer approval
+ * (docs/sujet.md §2 — PayPal support).
  *
- * <p><b>Scope actually delivered by this increment:</b> creating a PayPal
- * Order (intent {@code CAPTURE}) and persisting a {@code PENDING} payment row
- * with its id (standard PayPal Orders v2 "create order" step). The response
- * includes the order's PayPal-hosted approval URL — the client is expected to
- * redirect the payer there to approve the order themselves.</p>
+ * <p><b>Scope delivered — creation:</b> creating a PayPal Order (intent
+ * {@code CAPTURE}) and persisting a {@code PENDING} payment row with its id
+ * (standard PayPal Orders v2 "create order" step). The response includes the
+ * order's PayPal-hosted approval URL — the client is expected to redirect
+ * the payer there to approve the order themselves.</p>
  *
- * <p><b>NOT implemented (explicitly out of scope here):</b> the capture step
- * that must happen after the payer approves the order on PayPal's side
- * (normally: PayPal redirects back to a return URL, and the server then
- * calls PayPal's capture endpoint to actually move the funds), and there is
- * no webhook handling for PayPal's {@code CHECKOUT.ORDER.APPROVED}/
- * {@code PAYMENT.CAPTURE.COMPLETED} events either. Today, a PayPal-originated
- * payment only ever leaves {@code PENDING} through the existing manual
- * {@code PATCH /payments/{id}/status} endpoint — there is no automatic
- * reconciliation with PayPal's own view of the order's state. A real
- * production integration needs the capture call plus webhook verification
- * before this can be considered a complete payment flow.</p>
+ * <p><b>Scope delivered — capture:</b> {@link #captureOrder} calls PayPal's
+ * Orders v2 capture endpoint for an order the payer has already approved
+ * (standard "explicit capture after client-side redirect" pattern: the
+ * client calls this after PayPal redirects the payer back to the app's
+ * return URL) and transitions the corresponding {@code Payment} row
+ * (looked up by {@code externalReference} = the Order id) to
+ * {@code COMPLETED} on success or {@code FAILED} if PayPal's capture call
+ * itself fails.</p>
+ *
+ * <p><b>Still a simplified flow vs. full production PayPal integration:</b>
+ * PayPal's own guidance is to also verify completion via the
+ * {@code PAYMENT.CAPTURE.COMPLETED} webhook, since an explicit client-driven
+ * capture call can be interrupted (network failure, browser closed) before
+ * the server ever learns the outcome — a webhook is the only fully reliable
+ * signal. No PayPal webhook is implemented in this increment (see
+ * {@code docs/sujet.md} for whether a mirror of the Stripe webhook was
+ * added). There is also no PayPal-side idempotency key
+ * ({@code PayPal-Request-Id}) applied to the capture call and no retry
+ * logic beyond what a single synchronous call provides.</p>
  */
 @Service
 public class PayPalPaymentService {
+
+    private static final Set<String> TERMINAL_STATUSES =
+            Set.of(Payment.STATUS_COMPLETED, Payment.STATUS_FAILED);
 
     private final PaymentRepository paymentRepository;
     private final PaypalServerSdkClient paypalServerSdkClient;
@@ -99,6 +117,53 @@ public class PayPalPaymentService {
                 PaymentProvider.PAYPAL, order.getId());
         Payment saved = paymentRepository.save(payment);
         return PayPalPaymentResponse.from(saved, approveUrl);
+    }
+
+    /**
+     * Capture a previously-created, payer-approved PayPal Order.
+     *
+     * <p>Deliberately NOT wrapped in a single {@code @Transactional} method:
+     * on a provider-side capture failure, the {@code FAILED} status must
+     * still be persisted even though a {@link PaymentProviderException} is
+     * then thrown to surface the failure as a 502 to the caller — an
+     * enclosing transaction would roll that status change back along with
+     * the exception. Each {@link PaymentRepository} call below already runs
+     * in its own transaction (standard Spring Data JPA repository
+     * behaviour), so the status change from the catch block below survives.</p>
+     *
+     * @throws PaymentNotFoundException if no active payment has this order id
+     *     as its {@code externalReference}
+     * @throws PaymentAlreadyTerminalException if that payment's status is
+     *     already COMPLETED or FAILED
+     * @throws PaymentProviderException if the call to PayPal's capture API
+     *     fails (the payment is still transitioned to FAILED before this is thrown)
+     */
+    public PaymentResponse captureOrder(String orderId) {
+        Payment payment = paymentRepository.findActiveByExternalReference(orderId)
+                .orElseThrow(() -> new PaymentNotFoundException(orderId));
+
+        if (TERMINAL_STATUSES.contains(payment.getStatus())) {
+            throw new PaymentAlreadyTerminalException(payment.getId(), payment.getStatus());
+        }
+
+        CaptureOrderInput input = new CaptureOrderInput.Builder(orderId, "application/json").build();
+        Order order;
+        try {
+            ApiResponse<Order> response = paypalServerSdkClient.getOrdersController().captureOrder(input);
+            order = response.getResult();
+        } catch (ApiException | IOException | AuthValidationException ex) {
+            // Same three exception types as createOrder above — see that
+            // catch block's comment on AuthValidationException.
+            payment.setStatus(Payment.STATUS_FAILED);
+            paymentRepository.save(payment);
+            throw new PaymentProviderException("PayPal", ex);
+        }
+
+        payment.setStatus(order.getStatus() == OrderStatus.COMPLETED
+                ? Payment.STATUS_COMPLETED
+                : Payment.STATUS_FAILED);
+        Payment saved = paymentRepository.save(payment);
+        return PaymentResponse.from(saved);
     }
 
     /**

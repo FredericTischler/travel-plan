@@ -26,24 +26,30 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Integration test for {@code POST /payments/paypal} (docs/sujet.md §2).
+ * Integration test for {@code POST /payments/paypal/{orderId}/capture}
+ * (docs/sujet.md §2).
  *
- * <p><b>Requires REAL PayPal sandbox credentials.</b> Unlike Stripe, PayPal's
- * Orders API always requires a genuine OAuth client-credentials exchange
- * (client id + secret) even in sandbox — there is no equivalent of Stripe's
- * "test key that just works" without an actual PayPal Developer sandbox app.
- * This environment has no such sandbox app registered, so this test SKIPS
- * ITSELF (via {@link Assumptions#assumeTrue}) unless both
- * {@code PAYPAL_TEST_CLIENT_ID} and {@code PAYPAL_TEST_CLIENT_SECRET} are set
- * to real sandbox credentials when running the build — it does not fabricate
- * a mock that would prove nothing about the real PayPal integration. When it
- * does run, it exercises the actual flow end-to-end against PayPal's real
- * sandbox API: Order creation only — see {@code PayPalPaymentService}
- * javadoc for what is deliberately NOT covered (approval + capture).</p>
+ * <p><b>Requires REAL PayPal sandbox credentials</b> — same constraint as
+ * {@link PayPalPaymentIntegrationTest}; SKIPS ITSELF via
+ * {@link Assumptions#assumeTrue} unless {@code PAYPAL_TEST_CLIENT_ID} /
+ * {@code PAYPAL_TEST_CLIENT_SECRET} are set.</p>
+ *
+ * <p><b>What this test can and cannot prove, even with real credentials:</b>
+ * a real capture succeeding requires a human to approve the order in a
+ * browser first (PayPal's hosted approval flow) — impossible to automate
+ * here. So this test exercises the order-creation + capture-call wiring
+ * end-to-end against PayPal's real sandbox API, then asserts the outcome of
+ * capturing an order that was never approved: PayPal's Orders API rejects
+ * that as {@code ORDER_NOT_APPROVED}, which this service surfaces as 502
+ * (Bad Gateway) with the payment transitioned to {@code FAILED}. This is a
+ * real, non-mocked assertion about {@code PayPalPaymentService#captureOrder}'s
+ * error-handling path — it does NOT exercise the success path
+ * ({@code COMPLETED}), which would require manual browser approval and is
+ * therefore not covered by any automated test in this repository.</p>
  */
 @SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT)
 @Testcontainers
-class PayPalPaymentIntegrationTest {
+class PayPalCaptureIntegrationTest {
 
     @Container
     static final PostgreSQLContainer<?> postgres =
@@ -63,10 +69,6 @@ class PayPalPaymentIntegrationTest {
         registry.add("STRIPE_API_KEY", () -> TestProviderCredentials.STRIPE_API_KEY);
         registry.add("STRIPE_SECRET_KEY", () -> TestProviderCredentials.STRIPE_SECRET_KEY);
         registry.add("STRIPE_WEBHOOK_SECRET", () -> TestProviderCredentials.STRIPE_WEBHOOK_SECRET);
-        // Real sandbox credentials if provided by the environment, dummy
-        // otherwise — enough for the Spring context (and the PayPal client
-        // bean, built lazily w.r.t. network calls) to start; the real check
-        // happens inside the test body, guarded by assumeTrue below.
         String realClientId = System.getenv("PAYPAL_TEST_CLIENT_ID");
         String realClientSecret = System.getenv("PAYPAL_TEST_CLIENT_SECRET");
         registry.add("PAYPAL_CLIENT_ID", () -> realClientId != null ? realClientId : TestProviderCredentials.PAYPAL_CLIENT_ID);
@@ -86,7 +88,7 @@ class PayPalPaymentIntegrationTest {
     }
 
     @Test
-    void createOrderReturns201WithApproveUrl() {
+    void capturingAnUnapprovedOrderFailsAndMarksPaymentFailed() {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(TestJwtTokens.validToken());
         headers.setContentType(MediaType.APPLICATION_JSON);
@@ -95,11 +97,23 @@ class PayPalPaymentIntegrationTest {
                 "amount", 19.99,
                 "currency", "USD");
 
-        ResponseEntity<Map> response = restTemplate.postForEntity(
+        ResponseEntity<Map> createResponse = restTemplate.postForEntity(
                 "/payments/paypal", new HttpEntity<>(body, headers), Map.class);
+        assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        String orderId = (String) createResponse.getBody().get("orderId");
 
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(response.getBody()).containsKeys("approveUrl", "orderId");
-        assertThat(response.getBody().get("provider")).isEqualTo("PAYPAL");
+        HttpHeaders captureHeaders = new HttpHeaders();
+        captureHeaders.setBearerAuth(TestJwtTokens.validToken());
+        ResponseEntity<Map> captureResponse = restTemplate.postForEntity(
+                "/payments/paypal/" + orderId + "/capture",
+                new HttpEntity<>(null, captureHeaders), Map.class);
+
+        assertThat(captureResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+
+        ResponseEntity<Map> getResponse = restTemplate.exchange(
+                "/payments/" + createResponse.getBody().get("id"),
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(null, captureHeaders), Map.class);
+        assertThat(getResponse.getBody().get("status")).isEqualTo("FAILED");
     }
 }

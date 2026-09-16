@@ -53,6 +53,11 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.BAD_GATEWAY, ex.getMessage());
     }
 
+    @ExceptionHandler(InvalidWebhookSignatureException.class)
+    public ResponseEntity<Map<String, Object>> handleInvalidWebhookSignature(InvalidWebhookSignatureException ex) {
+        return buildResponse(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
         String detail = ex.getBindingResult().getFieldErrors().stream()

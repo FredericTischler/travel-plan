@@ -65,6 +65,7 @@ class StripePaymentIntegrationTest {
         String realKey = System.getenv("STRIPE_TEST_SECRET_KEY");
         registry.add("STRIPE_API_KEY", () -> TestProviderCredentials.STRIPE_API_KEY);
         registry.add("STRIPE_SECRET_KEY", () -> realKey != null ? realKey : TestProviderCredentials.STRIPE_SECRET_KEY);
+        registry.add("STRIPE_WEBHOOK_SECRET", () -> TestProviderCredentials.STRIPE_WEBHOOK_SECRET);
     }
 
     @Autowired

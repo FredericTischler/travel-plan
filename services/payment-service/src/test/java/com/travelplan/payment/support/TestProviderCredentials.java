@@ -22,6 +22,7 @@ public final class TestProviderCredentials {
 
     public static final String STRIPE_API_KEY = "pk_test_dummy_not_a_real_key";
     public static final String STRIPE_SECRET_KEY = "sk_test_dummy_not_a_real_key";
+    public static final String STRIPE_WEBHOOK_SECRET = "whsec_test_dummy_secret_for_payment_tests";
     public static final String PAYPAL_CLIENT_ID = "dummy-paypal-client-id";
     public static final String PAYPAL_CLIENT_SECRET = "dummy-paypal-client-secret";
 

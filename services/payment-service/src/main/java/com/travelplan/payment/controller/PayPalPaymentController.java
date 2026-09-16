@@ -2,11 +2,13 @@ package com.travelplan.payment.controller;
 
 import com.travelplan.payment.dto.CreatePayPalPaymentRequest;
 import com.travelplan.payment.dto.PayPalPaymentResponse;
+import com.travelplan.payment.dto.PaymentResponse;
 import com.travelplan.payment.service.PayPalPaymentService;
 import com.travelplan.payment.service.TokenValidationService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -50,5 +52,26 @@ public class PayPalPaymentController {
         tokenValidationService.requireValidToken(authorizationHeader);
         PayPalPaymentResponse created = payPalPaymentService.createOrder(request);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+
+    /**
+     * Capture a previously-created, payer-approved PayPal Order. Requires a
+     * valid Bearer token with the ADMIN role — same RBAC as every other
+     * endpoint on this service (unlike {@code POST /webhooks/stripe}, this
+     * is a normal client-driven call, not a provider-originated call, so it
+     * goes through the usual RBAC).
+     *
+     * @return 200 with the updated payment (COMPLETED if the capture
+     *         succeeded), 404 if no payment has this order id, 409 if that
+     *         payment's status is already terminal, 502 if PayPal's capture
+     *         call fails (the payment is transitioned to FAILED first),
+     *         401/403 per {@link TokenValidationService#requireValidToken}
+     */
+    @PostMapping("/{orderId}/capture")
+    public ResponseEntity<PaymentResponse> capture(
+            @PathVariable String orderId,
+            @RequestHeader(name = "Authorization", required = false) String authorizationHeader) {
+        tokenValidationService.requireValidToken(authorizationHeader);
+        return ResponseEntity.ok(payPalPaymentService.captureOrder(orderId));
     }
 }

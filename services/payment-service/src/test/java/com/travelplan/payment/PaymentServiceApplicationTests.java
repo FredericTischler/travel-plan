@@ -62,6 +62,7 @@ class PaymentServiceApplicationTests {
         registry.add("JWT_SIGNING_KEY", () -> TestJwtTokens.SIGNING_KEY);
         registry.add("STRIPE_API_KEY", () -> TestProviderCredentials.STRIPE_API_KEY);
         registry.add("STRIPE_SECRET_KEY", () -> TestProviderCredentials.STRIPE_SECRET_KEY);
+        registry.add("STRIPE_WEBHOOK_SECRET", () -> TestProviderCredentials.STRIPE_WEBHOOK_SECRET);
         registry.add("PAYPAL_CLIENT_ID", () -> TestProviderCredentials.PAYPAL_CLIENT_ID);
         registry.add("PAYPAL_CLIENT_SECRET", () -> TestProviderCredentials.PAYPAL_CLIENT_SECRET);
     }

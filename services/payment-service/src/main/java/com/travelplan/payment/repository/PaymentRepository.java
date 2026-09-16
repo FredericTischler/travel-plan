@@ -37,4 +37,17 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
      */
     @Query("SELECT p FROM Payment p WHERE p.userId = :userId AND p.deletedAt IS NULL")
     List<Payment> findAllActiveByUserId(@Param("userId") UUID userId);
+
+    /**
+     * Find a non-deleted payment by its provider-side external reference
+     * (a Stripe PaymentIntent id or a PayPal Order id — see
+     * {@link Payment#getExternalReference()}).
+     *
+     * Used to reconcile a provider-originated payment with its own view of
+     * the payment's state: the Stripe webhook handler and the PayPal capture
+     * endpoint both look up the {@link Payment} row this way, since neither
+     * provider knows this service's internal payment id.
+     */
+    @Query("SELECT p FROM Payment p WHERE p.externalReference = :externalReference AND p.deletedAt IS NULL")
+    Optional<Payment> findActiveByExternalReference(@Param("externalReference") String externalReference);
 }
