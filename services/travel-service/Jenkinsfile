@@ -138,13 +138,20 @@ pipeline {
                     // compilees ET du packaging ; les tests viennent d'etre
                     // joues au stage precedent, on ne les rejoue pas (deux
                     // Testcontainers de suite dans 1600m de cgroup = OOM).
+                    // -Dsonar.coverage.jacoco.xmlReportPaths : le stage "Test"
+                    // qui vient de tourner (JaCoCo lie a la phase `test` dans
+                    // le pom.xml) a deja produit target/site/jacoco/jacoco.xml
+                    // dans CE MEME workspace (meme `dir()`, pas de stash/unstash
+                    // entre les deux stages) ; on le pointe explicitement pour
+                    // que le scanner l'attache SANS rejouer les tests.
                     sh '''
                         ./mvnw verify sonar:sonar -B --no-transfer-progress \
                           -DskipTests \
                           -Dsonar.host.url="$SONAR_HOST_URL" \
                           -Dsonar.token="$SONAR_TOKEN" \
                           -Dsonar.projectKey=travel-plan-travel-service \
-                          -Dsonar.projectName="Travel-Plan Travel Service"
+                          -Dsonar.projectName="Travel-Plan Travel Service" \
+                          -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
                     '''
                 }
             }

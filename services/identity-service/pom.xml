@@ -168,6 +168,41 @@
                 <version>5.8.0.7211</version>
             </plugin>
 
+            <!-- JaCoCo — code coverage measurement, consumed by SonarQube via
+                 sonar.coverage.jacoco.xmlReportPaths (see Jenkinsfile). Version
+                 PINNED for the same reproducibility reason as the Sonar plugin
+                 above. 0.8.13 = latest stable on Maven Central, supports Java 21
+                 bytecode (class file version 65).
+                 - `prepare-agent`: default binding (no explicit phase), wires the
+                   JaCoCo runtime agent into the forked Surefire JVM so coverage
+                   data is collected while tests run.
+                 - `report`, bound to the `test` phase: generates the report right
+                   after the tests it covers, so a plain `mvn test` already
+                   produces target/site/jacoco/jacoco.xml — no `verify` needed.
+                   This is what lets the Jenkins "Test" stage produce the report
+                   that the later "SonarQube analysis" stage (`verify -DskipTests`)
+                   reuses instead of regenerating. -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.13</version>
+                <executions>
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
         </plugins>
     </build>
 
