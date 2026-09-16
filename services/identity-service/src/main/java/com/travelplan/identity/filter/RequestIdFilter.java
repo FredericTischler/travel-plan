@@ -4,6 +4,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -32,12 +34,18 @@ import java.util.UUID;
  *       line automatically.</li>
  *   <li>The value is set on the response under {@link #REQUEST_ID_HEADER} so
  *       the caller can see it too.</li>
+ *   <li>Every request produces exactly one INFO access-log line (method,
+ *       path, status, duration) carrying the requestId — without it, a
+ *       normal request that hits no error path never produces any log at
+ *       all, and the correlation mechanism has nothing to correlate.</li>
  *   <li>The MDC entry is always removed in a {@code finally} block, so it
  *       never leaks into a later request reusing the same worker thread.</li>
  * </ul>
  */
 @Component
 public class RequestIdFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(RequestIdFilter.class);
 
     public static final String REQUEST_ID_HEADER = "X-Request-Id";
     public static final String MDC_KEY = "requestId";
@@ -52,9 +60,14 @@ public class RequestIdFilter extends OncePerRequestFilter {
 
         MDC.put(MDC_KEY, requestId);
         response.setHeader(REQUEST_ID_HEADER, requestId);
+        long startMillis = System.currentTimeMillis();
         try {
             filterChain.doFilter(request, response);
         } finally {
+            // Logged BEFORE MDC.remove: the JSON encoder only includes MDC
+            // entries present at the moment this call is made.
+            log.info("{} {} -> {} ({} ms)", request.getMethod(), request.getRequestURI(),
+                    response.getStatus(), System.currentTimeMillis() - startMillis);
             MDC.remove(MDC_KEY);
         }
     }
