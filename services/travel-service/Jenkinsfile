@@ -172,7 +172,7 @@ pipeline {
                     for i in $(seq 1 60); do
                       status=$(curl -sf -u "$SONAR_TOKEN:" \
                         "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$key" \
-                        | sed -n 's/.*"projectStatus":{"status":"\([A-Z_]*\)".*/\1/p')
+                        | grep -oE '"status":"[A-Z_]*"' | head -1 | cut -d'"' -f4)
                       case "$status" in
                         OK)    echo "Quality gate: OK"; exit 0 ;;
                         ERROR) echo "Quality gate: ERROR"; exit 1 ;;
