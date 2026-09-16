@@ -57,9 +57,15 @@ lancer un a la fois** (contrainte assumee de l'increment « pas d'agent dedie »
 
 ## Ce que le role NE fait PAS (assume, pas un oubli)
 - **Pas de SonarQube** — increment separe.
-- **Pas de webhook, pas de `pollSCM`, pas de multibranch scan** — declenchement
-  **manuel strict**, sur **les trois** jobs. Le `<triggers/>` vide de chaque
-  config.xml en est la preuve structurelle (asserte par Molecule, job par job).
+- **Pas de webhook, pas de `pollSCM`, pas de multibranch scan, pas de mecanisme
+  de Pull Request** — declenchement **manuel strict**, sur **les trois** jobs, et
+  **y compris quand le SCM est le vrai remote GitHub** (mode B ci-dessous : seule
+  la **source** du checkout change, jamais le declenchement). Le `<triggers/>`
+  vide de chaque config.xml en est la preuve structurelle (asserte par Molecule,
+  job par job, **dans les deux modes**).
+- **Il ne cree, ne stocke et ne rend AUCUNE cle ni token.** En mode B il ne rend
+  que **l'identifiant** du credential Jenkins ; la cle de deploiement est
+  generee et deposee **a la main** par l'operateur (procedure en fin de fichier).
 - **Pas de build ni de push d'image Docker** depuis Jenkins.
 - **Pas d'agent Jenkins distinct** : les builds tournent sur le controleur.
 - **Il ne CREE pas les jobs dans Jenkins, et n'installe pas les plugins.** Les deux
@@ -80,27 +86,51 @@ le build applicatif correspondant, avec **une seule** image de controleur. Verif
 `unzip` est une dependance **dure** : le `mvnw` de ce depot est un wrapper shell
 artisanal qui telecharge la distribution Maven en `.zip` et l'extrait avec `unzip`.
 
-### Source du code : miroir local `file://`, PAS le remote GitHub
-`git remote -v` du depot pointe sur `git@github.com:...` (**SSH**). Cloner depuis
-Jenkins exigerait une cle de deploiement = **un secret dans Jenkins**, avant tout
-cablage Vault. On monte donc le checkout de l'hote en **lecture seule** dans le
-conteneur et le job fait un **vrai `checkout scm`** (git-plugin, branche,
-`scriptPath`) en `file:///srv/travel-plan-repo`, avec **zero credential**.
+### Source du code : deux modes, un seul commutateur (`jenkins_scm_url`)
 
-- **Tradeoff** : le job teste ce qui est **commite dans le checkout local**, pas
-  ce qui est pousse sur GitHub. C'est exactement l'usage d'un declenchement
-  **manuel** en increment minimal. Le passage au remote + credential Vault est un
-  increment ulterieur — celui qui amenera aussi les webhooks.
-- **Corollaire non evident, trouve en le cassant** : le git-plugin **refuse** par
-  defaut un remote qui pointe sur un repertoire local
-  (`... references a local directory, which may be insecure`). Il faut lever le
-  garde-fou : `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true`
-  (variable `jenkins_allow_local_checkout`, injectee dans `JAVA_OPTS`).
-  Ce garde-fou protege un Jenkins **multi-utilisateur** (un utilisateur pouvant
-  configurer un job lirait n'importe quel repertoire local). **Accepte ici** :
-  Jenkins solo, un seul compte, un seul job, et le seul repertoire local
-  atteignable est un bind-mount **`:ro`**. **A repasser a `false`** le jour ou le
-  job clonera un vrai remote.
+| | **Mode A — miroir local** (defaut) | **Mode B — vrai remote GitHub** (opt-in) |
+|---|---|---|
+| `jenkins_scm_url` | `file:///srv/travel-plan-repo` | `git@github.com:FredericTischler/travel-plan.git` |
+| `jenkins_scm_credential_id` | *(vide)* | `github-deploy-key` |
+| `jenkins_scm_repo_host_path` | **obligatoire** (bind-mount `:ro`) | inutile, non monte |
+| Credential Jenkins | **aucun** | cle de deploiement **lecture seule**, deposee **a la main** |
+| Ce que le job teste | ce qui est **commite en local** | ce qui est **pousse sur GitHub** |
+| Declenchement | **manuel strict** | **manuel strict** (inchange) |
+
+Le mode est **derive de la forme de l'URL** (`jenkins_scm_local_mirror`), pas
+saisi separement : basculer ne demande pas de penser a retourner trois booleens —
+et a en oublier un.
+
+**Le defaut reste le mode A**, comme tous les flags de ce projet (`false`/vide par
+defaut, on n'active rien implicitement) ; surtout, le mode B est **inutilisable
+tant que l'operateur n'a pas depose lui-meme le credential** dans Jenkins.
+
+- **Tradeoff du mode A** : le job teste ce qui est **commite dans le checkout
+  local**, pas ce qui est pousse. Zero credential, zero surface d'authentification.
+- **Tradeoff du mode B** : le job teste la **source de verite**, au prix d'un
+  secret a gerer dans Jenkins (que ce depot ne voit jamais : seul **l'identifiant**
+  du credential est rendu, ce qui n'est pas un secret).
+- **Ce que le mode B n'apporte PAS, volontairement** : ni webhook, ni `pollSCM`,
+  ni scan multibranch, ni mecanisme de **Pull Request**. Seule la **source** du
+  checkout change. Le `<triggers/>` reste vide dans les deux modes — **asserte par
+  Molecule sur les deux**.
+
+**Corollaire non evident du mode A, trouve en le cassant** : le git-plugin
+**refuse** par defaut un remote pointant sur un repertoire local
+(`... references a local directory, which may be insecure`). Il faut lever le
+garde-fou : `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true`
+(`jenkins_allow_local_checkout`, injecte dans `JAVA_OPTS`). Ce garde-fou protege
+un Jenkins **multi-utilisateur** (un utilisateur pouvant configurer un job lirait
+n'importe quel repertoire local). **Accepte en mode A** : Jenkins solo, un seul
+compte, et le seul repertoire local atteignable est un bind-mount **`:ro`**.
+
+> **« Reste-t-il necessaire en mode B ? » Non — et c'est desormais automatique.**
+> `jenkins_allow_local_checkout` est **derive** de `jenkins_scm_url` : sur un
+> remote `git@github.com:...` la propriete n'est **plus injectee du tout**, donc
+> le garde-fou du git-plugin **se retablit sans intervention**. Le bind-mount du
+> checkout hote disparait du fragment pour la meme raison (plus rien a monter, et
+> pas d'elargissement gratuit de la surface du conteneur). Les deux points sont
+> assertes par Molecule en mode B.
 
 ### UI : route Traefik, PAS de port publie
 `https://jenkins.localhost/` via les labels Docker, **meme idiome que
@@ -159,8 +189,14 @@ teste pas le service **deploye**, il compile et teste les **sources**.
 variables d'environnement non sensibles (`JAVA_OPTS`, `TESTCONTAINERS_HOST_OVERRIDE`,
 `DOCKER_HOST`) — asserte par Molecule. Le mot de passe admin est **genere par
 Jenkins** dans `JENKINS_HOME/secrets/initialAdminPassword` (volume nomme) et lu
-**a l'execution**. Le config.xml du job ne contient **aucun** identifiant : le
-transport `file://` n'authentifie rien.
+**a l'execution**. En mode A, le config.xml du job ne contient **aucun**
+identifiant : le transport `file://` n'authentifie rien.
+
+En mode B, le seul ajout est `<credentialsId>github-deploy-key</credentialsId>` :
+**un nom d'entree du credential store, pas un secret**. La cle privee n'existe
+que dans `JENKINS_HOME`, deposee **a la main** par l'operateur (procedure ci-
+dessous) ; le role ne la genere pas, ne la lit pas, ne la rend pas. Molecule
+asserte qu'aucun rendu ne contient de `PRIVATE KEY`.
 
 ## Test
 
@@ -188,6 +224,17 @@ que le repertoire de rendu contient **exactement** le fragment + 3 `config.xml`
 et rien d'autre — un fichier orphelin trahirait un job retire de `jenkins_jobs`
 mais laisse sur le disque (le role ne nettoie pas ce qu'il ne gere plus : c'est
 l'operateur qui supprime le fichier **et** l'item Jenkins).
+
+Le scenario converge **deux fois**, dans deux repertoires distincts : le mode A
+(reference) puis le **mode B** avec `jenkins_scm_url=git@github.com:...` et
+`jenkins_scm_credential_id=github-deploy-key`. Sans ce 2e passage, la branche
+opt-in du template ne serait jamais exercee. Le mode B asserte : remote reel +
+`<credentialsId>` **reference seule** (aucune `PRIVATE KEY`, aucun `file://`),
+`<triggers/>` **toujours vide** (le point dur : passer au remote ne doit rien
+declencher automatiquement), **plus de bind-mount** du depot et
+**`ALLOW_LOCAL_CHECKOUT` absent** de `JAVA_OPTS`. Le mode B n'est jamais convergé
+avec `jenkins_scm_repo_host_path` : prouver qu'il **n'est plus requis** fait
+partie du contrat.
 
 ```bash
 export PATH="$PWD/.venv-ansible/bin:$PATH"
@@ -429,3 +476,197 @@ Le volume `travel-plan-jenkins-home` **survit** : plugins, jobs, historique et
 cache `~/.m2` sont deja la au prochain `up`. Les etapes 3 et 4 ne se rejouent pas
 (l'etape 4 ne se rejoue que pour un job **nouvellement** ajoute a
 `jenkins_jobs`, ou en mode mise a jour `/job/<nom>/config.xml`).
+
+---
+
+# Mode B : brancher la CI sur le **vrai remote GitHub** (procedure MANUELLE)
+
+> **Optionnel.** Le mode A (miroir local) reste le defaut et reste pleinement
+> supporte. Ce mode-ci fait tester a Jenkins **ce qui est pousse sur GitHub** au
+> lieu de ce qui est commite dans le checkout de la machine.
+>
+> **Ce qu'il n'apporte PAS, volontairement** : aucun webhook, aucun `pollSCM`,
+> aucun scan multibranch, **aucun mecanisme de Pull Request**. Le declenchement
+> reste **100 % manuel** (bouton *Build Now* / CLI). **Seule la source du
+> checkout change.**
+
+## Pourquoi c'est manuel (et pourquoi ca le restera)
+
+Le role ne peut pas faire ces etapes a ta place, et ce n'est pas un manque :
+
+| A faire a la main | Pourquoi ce n'est pas dans le role |
+|---|---|
+| Generer la paire de cles | Une cle privee est un **secret**. Elle n'a rien a faire dans ce depot, ni dans un rendu Ansible, ni dans un log de playbook. |
+| Declarer la cle publique sur GitHub | Ecriture via l'API authentifiee de GitHub — exigerait un **token GitHub** cote Ansible, avant tout cablage Vault. |
+| Deposer la cle privee dans Jenkins | Ecriture via l'API authentifiee de Jenkins — meme probleme (c'est deja la raison pour laquelle le role ne cree pas les jobs). |
+
+Ce que le role fait, lui : rendre les `config.xml` qui **referencent** le
+credential par son **ID** (un nom, pas un secret) et retirer du fragment tout ce
+qui n'a plus lieu d'etre en mode remote.
+
+## 1. Generer la paire de cles (sur l'hote, HORS du depot)
+
+```bash
+mkdir -p ~/.ssh
+ssh-keygen -t ed25519 -C "travel-plan-jenkins-deploy" \
+  -f ~/.ssh/travel-plan-jenkins-deploy -N ""
+# -> ~/.ssh/travel-plan-jenkins-deploy      (PRIVEE : ne JAMAIS la commiter)
+# -> ~/.ssh/travel-plan-jenkins-deploy.pub  (publique)
+```
+
+`ed25519` plutot que RSA : plus courte, supportee par GitHub depuis longtemps.
+`-N ""` (sans passphrase) est **deliberé** : Jenkins doit pouvoir cloner sans
+interaction ; une passphrase devrait de toute facon etre stockee a cote de la
+cle, ce qui ne protegerait rien de plus ici. La protection reelle, c'est le
+**perimetre** de la cle : un seul depot, **lecture seule** (etape 2).
+
+## 2. Declarer la cle publique comme **deploy key LECTURE SEULE** sur GitHub
+
+Dans le navigateur, sur le depot
+`https://github.com/FredericTischler/travel-plan` :
+
+*Settings → Deploy keys → **Add deploy key***
+
+| Champ | Valeur |
+|---|---|
+| Title | `travel-plan-jenkins` (libre, sert a le revoquer plus tard) |
+| Key | le contenu **integral** de `~/.ssh/travel-plan-jenkins-deploy.pub` (`cat` puis copier, une seule ligne `ssh-ed25519 AAAA... travel-plan-jenkins-deploy`) |
+| **Allow write access** | **NE PAS COCHER** |
+
+> **Deploy key plutot qu'un PAT** : une deploy key est limitee a **ce depot**, un
+> PAT porte les droits du **compte**. Si la machine de CI est compromise, une
+> deploy key en lecture seule ne permet que de relire un depot qu'on a deja en
+> local — rien a pousser, rien a supprimer, aucun autre depot. La case *Allow
+> write access* laissee decochee est le point le plus important de cette page.
+
+## 3. Deposer la cle **privee** dans le credential store de Jenkins
+
+Jenkins doit tourner (`docker compose --profile ci up -d jenkins`), puis
+`https://jenkins.localhost/` :
+
+*Manage Jenkins → Credentials → System → Global credentials → **Add Credentials***
+
+| Champ | Valeur |
+|---|---|
+| Kind | **SSH Username with private key** |
+| Scope | Global |
+| ID | **`github-deploy-key`** — c'est la valeur a repasser en `-e jenkins_scm_credential_id` (convention proposee ; tout autre ID marche, il faut juste que les deux coincident) |
+| Description | `Deploy key GitHub travel-plan (lecture seule)` |
+| Username | **`git`** — impose par GitHub pour un remote `git@github.com:...` |
+| Private Key | *Enter directly* → coller le contenu **integral** de `~/.ssh/travel-plan-jenkins-deploy`, en-tete `-----BEGIN OPENSSH PRIVATE KEY-----` et pied `-----END OPENSSH PRIVATE KEY-----` **compris**, avec le saut de ligne final |
+| Passphrase | vide (cf. etape 1) |
+
+> Un `Username` autre que `git` donne un `Permission denied (publickey)`
+> parfaitement trompeur : la cle est bonne, c'est l'utilisateur SSH qui ne l'est
+> pas. C'est l'erreur la plus courante de cette page.
+
+## 4. Autoriser la cle d'hote de `github.com` (le piege qui coute une heure)
+
+Le git-plugin verifie par defaut la cle d'hote du serveur SSH contre le
+`known_hosts` de Jenkins — **vide** dans un `JENKINS_HOME` neuf. Sans cette
+etape, le checkout echoue sur
+`Host key verification failed` / `No ED25519 host key is known for github.com`,
+alors que la cle de deploiement est parfaitement valide.
+
+*Manage Jenkins → Security → **Git Host Key Verification Configuration*** →
+strategie **`Known hosts file`** (recommandee), puis alimenter le fichier :
+
+```bash
+docker exec travel-plan-jenkins bash -c '
+mkdir -p /var/jenkins_home/.ssh
+ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> /var/jenkins_home/.ssh/known_hosts
+sort -u -o /var/jenkins_home/.ssh/known_hosts /var/jenkins_home/.ssh/known_hosts
+wc -l < /var/jenkins_home/.ssh/known_hosts'
+```
+
+Le fichier vit dans le **volume nomme** : cette etape ne se rejoue pas.
+L'alternative `Accept first connection` demande un clic de moins mais accepte
+aveuglement la premiere cle presentee — a ne choisir qu'en connaissance de cause.
+
+## 5. Rejouer le role en mode B — **la commande exacte**
+
+```bash
+cd /chemin/vers/le/depot/travel-plan
+source .venv-ansible/bin/activate
+
+ansible-playbook ansible/roles/jenkins/test-local.yml -K \
+  -e jenkins_scm_url=git@github.com:FredericTischler/travel-plan.git \
+  -e jenkins_scm_credential_id=github-deploy-key
+```
+
+`jenkins_scm_repo_host_path` n'est **plus** a fournir : la garde fail-fast qui
+l'exigeait ne s'applique qu'au mode `file://`. Si l'URL est en SSH **sans**
+`jenkins_scm_credential_id`, le role **echoue tout de suite**, avec le message
+qui dit quoi faire — plutot que de laisser decouvrir un
+`Permission denied (publickey)` au premier build.
+
+Ce que ce run change dans les rendus :
+
+- les 3 `config.xml` pointent sur `git@github.com:...` + `<credentialsId>` ;
+- `compose.jenkins.yml` **perd** le bind-mount `/srv/travel-plan-repo:ro` et
+  **perd** `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true` (inutile hors
+  `file://`, donc le garde-fou du git-plugin se retablit tout seul).
+
+Puis reassembler et **recreer** le conteneur (le fragment a change) :
+
+```bash
+ansible-playbook ansible/roles/compose-assembly/test-local.yml -K \
+  -e assembly_jenkins_enabled=true \
+  -e assembly_identity_fragment=/chemin/vers/le/depot/travel-plan/services/identity-service/docker-compose.identity.yml
+
+cd /opt/travel-plan && docker compose --profile ci up -d jenkins
+```
+
+## 6. Mettre a jour les jobs **existants** (pas `createItem`)
+
+Les jobs existent deja : c'est un **update** de leur `config.xml`, pas une
+creation (`createItem` repondrait `400 A job already exists`).
+
+```bash
+for JOB in identity-service-test payment-service-test travel-service-test; do
+  docker cp "/opt/travel-plan/jenkins/job-${JOB}-config.xml" \
+            "travel-plan-jenkins:/tmp/job-${JOB}.xml"
+
+  docker exec -e JOB="$JOB" travel-plan-jenkins bash -c '
+  PW=$(cat /var/jenkins_home/secrets/initialAdminPassword)
+  CRUMB=$(curl -s -u "admin:$PW" -c /tmp/ck \
+    "http://localhost:8080/crumbIssuer/api/xml?xpath=concat(//crumbRequestField,\":\",//crumb)")
+  curl -s -o /dev/null -w "update $JOB: %{http_code}\n" -u "admin:$PW" -b /tmp/ck -H "$CRUMB" \
+    -H "Content-Type: application/xml" --data-binary @/tmp/job-$JOB.xml \
+    "http://localhost:8080/job/$JOB/config.xml"
+  '
+done
+# attendu : update <job>: 200  (x3)
+```
+
+> Si le mot de passe admin a ete change (etape 3 de la sequence principale),
+> remplacer `$PW` par le mot de passe reel — jamais en clair dans un fichier du
+> depot.
+
+## 7. Verifier — et ce qui reste a prouver
+
+Declencher **un** build a la main (etape 5 de la sequence principale) et lire le
+debut du log : il doit montrer un `git fetch` sur `git@github.com:...` et non sur
+`file:///srv/travel-plan-repo`.
+
+Symptomes et causes, dans l'ordre de frequence :
+
+| Message | Cause |
+|---|---|
+| `Permission denied (publickey)` | `Username` != `git` (etape 3), ou cle publique non declaree sur GitHub (etape 2) |
+| `Host key verification failed` | etape 4 sautee |
+| `Jenkinsfile not found` | le Jenkinsfile n'est pas **pousse** sur la branche `jenkins_scm_branch` (en mode B, un commit local ne suffit plus) |
+
+> **Cette etape 7 n'a PAS ete executee lors de la mise en place du mode B** :
+> elle exige la cle de deploiement, que l'operateur est le seul a detenir. Ce qui
+> est prouve a ce stade : le **rendu** des deux modes (Molecule, mode A **et**
+> mode B) et l'idempotence. Le checkout GitHub reel se valide au premier build.
+
+## 8. Revenir au mode A
+
+Rejouer le role **sans** les deux `-e` (le defaut est le mode A), avec de nouveau
+`-e jenkins_scm_repo_host_path=...`, puis refaire les etapes 5 (reassemblage) et
+6 (update des jobs). Le credential Jenkins peut rester en place : il n'est plus
+reference par aucun job. Pour le revoquer vraiment, supprimer la **deploy key**
+cote GitHub (*Settings → Deploy keys*) — c'est la seule action qui coupe
+reellement l'acces.

@@ -22,3 +22,26 @@
     jenkins_docker_gid: "999"
   roles:
     - role: jenkins
+
+# 2e convergence, dans un repertoire SEPARE : le mode OPT-IN "vrai remote
+# GitHub". Il n'est jamais actif par defaut ; sans ce 2e passage, la branche
+# `{% if jenkins_scm_credential_id %}` du template ne serait jamais exercee et
+# pourrait etre cassee sans que rien ne le dise.
+#
+# Ce qui est teste ici est EXACTEMENT ce que l'operateur jouera en production du
+# role : les deux memes `-e`. `jenkins_scm_repo_host_path` n'est VOLONTAIREMENT
+# pas fourni : prouver qu'il n'est plus requis en mode remote fait partie du
+# contrat (la garde fail-fast doit etre skippee, pas satisfaite).
+#
+# L'ID de credential n'est PAS un secret : c'est le nom d'une entree du
+# credential store de Jenkins. Aucune cle n'est generee, stockee ni rendue.
+- name: Converge (mode opt-in remote GitHub)
+  hosts: all
+  gather_facts: false
+  vars:
+    jenkins_compose_dir: /tmp/travel-plan-jenkins-github
+    jenkins_scm_url: "git@github.com:FredericTischler/travel-plan.git"
+    jenkins_scm_credential_id: "github-deploy-key"
+    jenkins_docker_gid: "999"
+  roles:
+    - role: jenkins

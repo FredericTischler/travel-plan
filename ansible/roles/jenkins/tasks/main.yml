@@ -24,23 +24,55 @@
 # Un 2e converge rapporte changed=0.
 
 # --------------------------------------------------------------------------
-# 1) Garde fail-fast : le miroir SCM local est un CHEMIN ABSOLU d'hote, il n'a
-#    pas de defaut raisonnable. Mieux vaut echouer ici, en clair, que rendre un
-#    fragment avec un bind-mount vide que Compose refuserait plus tard.
+# 1) Gardes fail-fast sur la SOURCE du checkout.
+#    Deux modes, choisis par la FORME de jenkins_scm_url (cf. defaults) :
+#      A) file://...  -> miroir local bind-monte  (DEFAUT)
+#      B) git@... / https://... -> vrai remote GitHub, credential Jenkins
+#    Chaque mode a sa propre precondition ; on echoue ICI, en clair, plutot que
+#    de rendre un fragment que Compose refuserait, ou un job qui n'echouerait
+#    qu'au checkout, loin d'ici.
 # --------------------------------------------------------------------------
-- name: "Assert the local SCM mirror path is provided (absolute host path)"
+- name: "Assert the local SCM mirror path is provided (mode file:// only)"
   ansible.builtin.assert:
     that:
       - jenkins_scm_repo_host_path | length > 0
       - jenkins_scm_repo_host_path is match('^/')
     fail_msg: >-
-      jenkins_scm_repo_host_path est vide ou non absolu. Ce role monte un MIROIR
-      LOCAL du depot en lecture seule dans Jenkins (le remote est en SSH : un
-      clone direct exigerait une cle de deploiement, donc un secret, ce que cet
-      increment refuse). Fournir :
+      jenkins_scm_url est en file:// (mode miroir local) mais
+      jenkins_scm_repo_host_path est vide ou non absolu : il n'y a rien a
+      bind-monter. Fournir :
       -e jenkins_scm_repo_host_path=/chemin/absolu/vers/le/checkout/travel-plan
+      — ou passer au vrai remote :
+      -e jenkins_scm_url=git@github.com:FredericTischler/travel-plan.git
+      -e jenkins_scm_credential_id=github-deploy-key
     success_msg: "Miroir SCM local : {{ jenkins_scm_repo_host_path }}"
+  when: jenkins_scm_local_mirror | bool
   tags: [compose_fragment]
+
+# Mode B en SSH SANS credential = checkout garanti en echec (Permission denied
+# publickey) au premier "Build Now". Le role ne peut pas creer le credential (il
+# faudrait s'authentifier aupres de Jenkins, donc un secret cote Ansible) : il
+# exige donc au moins qu'on lui donne l'ID de celui que l'operateur a depose.
+# Un remote https:// PUBLIC reste legitime sans credential : non contraint.
+- name: "Assert an SSH remote comes with a Jenkins credential ID"
+  ansible.builtin.assert:
+    that:
+      - jenkins_scm_credential_id | length > 0
+    fail_msg: >-
+      jenkins_scm_url est un remote SSH ({{ jenkins_scm_url }}) mais
+      jenkins_scm_credential_id est vide : le checkout echouerait en
+      "Permission denied (publickey)". Deposer d'abord la cle de deploiement
+      LECTURE SEULE dans Jenkins (Credentials > SSH Username with private key,
+      username `git`) puis rejouer avec
+      -e jenkins_scm_credential_id=<id-du-credential>.
+      Procedure complete : README du role, section "Mode B".
+    success_msg: >-
+      Remote SSH {{ jenkins_scm_url }} via le credential Jenkins
+      '{{ jenkins_scm_credential_id }}'.
+  when:
+    - not (jenkins_scm_local_mirror | bool)
+    - jenkins_scm_url is match('^(ssh://|[^/]+@)')
+  tags: [compose_fragment, job_definition]
 
 # --------------------------------------------------------------------------
 # 2) GID du groupe `docker` de l'hote.

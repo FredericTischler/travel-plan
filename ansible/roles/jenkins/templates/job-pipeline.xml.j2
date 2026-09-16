@@ -1,3 +1,4 @@
+#jinja2: trim_blocks: True, lstrip_blocks: True
 {#
   Template GENERIQUE d'un job Pipeline Travel-Plan (increment CI/CD n°2 :
   generalisation multi-jobs). Il est rendu UNE FOIS PAR ENTREE de la liste
@@ -17,8 +18,12 @@
     - <triggers/> VIDE  => declenchement MANUEL strict. Aucun pollSCM, aucun
       webhook, aucun scan multibranch. C'est la preuve structurelle, pas une
       promesse en commentaire. Un seul endroit a auditer pour les 3 jobs.
-    - Aucun <credentialsId> dans userRemoteConfigs => ZERO secret. Le SCM est un
-      miroir local monte en lecture seule, transport file://.
+    - Aucun <credentialsId> dans userRemoteConfigs TANT QUE
+      `jenkins_scm_credential_id` est vide (defaut) => ZERO secret : le SCM est
+      alors un miroir local monte en lecture seule, transport file://.
+      Si l'operateur fournit un ID (mode remote GitHub), ce qui est rendu ici est
+      l'IDENTIFIANT d'une entree du credential store de Jenkins — jamais la cle
+      elle-meme, qui n'existe que dans JENKINS_HOME et n'entre pas dans ce depot.
     - Aucune etape d'analyse qualite, aucun build/push d'image : ce que fait
       reellement un job est decrit par le Jenkinsfile VERSIONNE du service
       (scriptPath), pas par ce XML.
@@ -45,10 +50,21 @@
       <configVersion>2</configVersion>
       <userRemoteConfigs>
         <hudson.plugins.git.UserRemoteConfig>
+{% if jenkins_scm_local_mirror | bool %}
           <!-- Miroir LOCAL monte en lecture seule dans le conteneur Jenkins.
                Transport file:// => AUCUNE authentification requise, donc aucun
                identifiant a referencer ici ni a stocker dans Jenkins. -->
+{% else %}
+          <!-- Remote distant : le job clone la source de verite. Le checkout
+               s'authentifie via l'entree du credential store referencee
+               ci-dessous (cle privee stockee par l'operateur DANS Jenkins,
+               jamais dans ce depot). Le declenchement reste MANUEL : voir le
+               bloc triggers vide plus bas. -->
+{% endif %}
           <url>{{ jenkins_scm_url }}</url>
+{% if jenkins_scm_credential_id | length > 0 %}
+          <credentialsId>{{ jenkins_scm_credential_id }}</credentialsId>
+{% endif %}
         </hudson.plugins.git.UserRemoteConfig>
       </userRemoteConfigs>
       <branches>

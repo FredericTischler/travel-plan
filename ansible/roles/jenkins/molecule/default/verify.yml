@@ -280,3 +280,74 @@
           Le repertoire de rendu contient autre chose que le fragment Compose et
           les 3 definitions de jobs attendues.
         success_msg: "Rendu : compose.jenkins.yml + 3 job-*-config.xml OK."
+
+    # =====================================================================
+    # 3) MODE OPT-IN "vrai remote GitHub" (2e converge, repertoire separe)
+    #
+    # Ce mode n'est JAMAIS actif par defaut : tout ce qui precede reste la
+    # reference. On verifie ici les quatre consequences du basculement, et
+    # surtout celle qui ne doit PAS bouger : le declenchement reste MANUEL.
+    # Passer au remote n'apporte ni webhook, ni pollSCM, ni multibranch, ni
+    # mecanisme de Pull Request — c'est la seule raison pour laquelle ce mode
+    # est acceptable dans le perimetre du projet.
+    # =====================================================================
+    - name: "Read the GitHub-mode artifacts"
+      ansible.builtin.slurp:
+        src: "{{ item }}"
+      loop:
+        - /tmp/travel-plan-jenkins-github/compose.jenkins.yml
+        - /tmp/travel-plan-jenkins-github/job-identity-service-test-config.xml
+      register: gh_b64
+
+    - name: "Assert GitHub mode: remote reel + credential REFERENCE (pas la cle)"
+      ansible.builtin.assert:
+        that:
+          - "'<url>git@github.com:FredericTischler/travel-plan.git</url>' in gh_job"
+          - "'<credentialsId>github-deploy-key</credentialsId>' in gh_job"
+          # Un ID de credential n'est pas un secret ; une cle, si. Aucune
+          # matiere cryptographique ne doit jamais atterrir dans un rendu.
+          - "'PRIVATE KEY' not in gh_job"
+          - "'file://' not in gh_job"
+        fail_msg: >-
+          Le job en mode GitHub ne reference pas le remote reel via son
+          credential (ou pire : il embarque de la matiere secrete).
+        success_msg: >-
+          Mode GitHub : remote SSH + <credentialsId>github-deploy-key</credentialsId>
+          (reference seule) OK.
+      vars:
+        gh_job: "{{ gh_b64.results[1].content | b64decode }}"
+
+    - name: "Assert GitHub mode: declenchement TOUJOURS manuel (le point dur)"
+      ansible.builtin.assert:
+        that:
+          - "'<triggers/>' in gh_job"
+          - "'GitHubPushTrigger' not in gh_job"
+          - "'SCMTrigger' not in gh_job"
+          - "'TimerTrigger' not in gh_job"
+          - "'branch-source' not in gh_job"
+        fail_msg: >-
+          Le passage au remote GitHub a introduit un trigger : le projet exige
+          un declenchement MANUEL strict, y compris sur le vrai remote (aucun
+          webhook, aucun scan multibranch, aucune Pull Request).
+        success_msg: "Mode GitHub : <triggers/> vide OK — manuel strict inchange."
+      vars:
+        gh_job: "{{ gh_b64.results[1].content | b64decode }}"
+
+    - name: "Assert GitHub mode: plus de bind-mount local ni de garde-fou leve"
+      ansible.builtin.assert:
+        that:
+          # Le miroir local n'a plus de raison d'etre : rien a monter.
+          - "gh_svc.volumes | select('search', 'travel-plan-repo') | list | length == 0"
+          # ALLOW_LOCAL_CHECKOUT ne sert qu'au transport file:// : sur un remote
+          # SSH, le garde-fou du git-plugin se retablit AUTOMATIQUEMENT.
+          - "'ALLOW_LOCAL_CHECKOUT' not in gh_svc.environment.JAVA_OPTS"
+          # Le reste du cablage (socket, Testcontainers) est inchange.
+          - "'/var/run/docker.sock:/var/run/docker.sock' in gh_svc.volumes"
+        fail_msg: >-
+          En mode remote, le fragment monte encore le checkout local ou leve
+          encore ALLOW_LOCAL_CHECKOUT : ces deux points sont des corollaires du
+          mode file:// et doivent disparaitre avec lui.
+        success_msg: >-
+          Mode GitHub : aucun bind-mount du depot, ALLOW_LOCAL_CHECKOUT absent OK.
+      vars:
+        gh_svc: "{{ (gh_b64.results[0].content | b64decode | from_yaml).services.jenkins }}"

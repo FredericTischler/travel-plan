@@ -45,7 +45,10 @@ services:
       # local directory, which may be insecure") et le job echoue au checkout.
       # Garde-fou leve EN CONNAISSANCE DE CAUSE (Jenkins solo, un seul compte,
       # bind-mount lecture seule) — cf. defaults/main.yml pour le detail.
-      JAVA_OPTS: "-Xmx{{ jenkins_controller_max_heap }} -Djava.awt.headless=true{% if jenkins_allow_local_checkout %} -Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true{% endif %}"
+      # N'apparait QUE si jenkins_scm_url est en file:// : sur un vrai remote
+      # (git@github.com:...) elle ne sert a rien, donc le garde-fou amont se
+      # retablit tout seul.
+      JAVA_OPTS: "-Xmx{{ jenkins_controller_max_heap }} -Djava.awt.headless=true{% if jenkins_allow_local_checkout | bool %} -Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true{% endif %}"
       # Testcontainers : le job tourne DANS ce conteneur mais cree ses conteneurs
       # de test sur le demon de l'HOTE. Par defaut getHost() renvoie `localhost`,
       # qui designerait CE conteneur — jamais l'hote ou le port du postgres de
@@ -64,10 +67,15 @@ services:
       # Socket Docker en LECTURE-ECRITURE : exige par Testcontainers (voir
       # l'en-tete de ce fichier). Volontairement SANS `:ro`.
       - "{{ jenkins_docker_socket }}:{{ jenkins_docker_socket }}"
+{% if jenkins_scm_local_mirror | bool %}
       # Miroir LOCAL du depot, en LECTURE SEULE : source du `checkout scm` du
       # job (transport file://). Evite une cle de deploiement SSH = evite un
       # secret dans Jenkins tant que Vault n'y est pas cable.
+      # ABSENT quand jenkins_scm_url pointe sur un vrai remote : le job clone
+      # alors GitHub, il n'y a plus rien a monter (et monter le checkout de
+      # l'hote pour rien elargirait la surface du conteneur sans contrepartie).
       - "{{ jenkins_scm_repo_host_path }}:{{ jenkins_scm_mount_path }}:ro"
+{% endif %}
     networks:
       # UN SEUL reseau : necessaire et suffisant pour que Traefik decouvre et
       # route l'UI. Jenkins ne parle a aucune base du projet (pas besoin du
