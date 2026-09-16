@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Currency;
 
 /**
  * Creates Stripe PaymentIntents (docs/sujet.md §2 — Stripe support).
@@ -56,7 +57,7 @@ public class StripePaymentService {
     @Transactional
     public StripePaymentResponse createPaymentIntent(CreateStripePaymentRequest request) {
         PaymentIntentCreateParams params = PaymentIntentCreateParams.builder()
-                .setAmount(toSmallestCurrencyUnit(request.getAmount()))
+                .setAmount(toSmallestCurrencyUnit(request.getAmount(), request.getCurrency()))
                 .setCurrency(request.getCurrency().toLowerCase())
                 .build();
 
@@ -75,20 +76,32 @@ public class StripePaymentService {
 
     /**
      * Converts a decimal amount to the integer count of the currency's
-     * smallest unit that Stripe's API expects (e.g. 12.34 USD -> 1234 cents).
+     * smallest unit that Stripe's API expects (e.g. 12.34 USD -> 1234 cents,
+     * 1000 JPY -> 1000, 12.345 BHD -> 12345).
      *
-     * <p><b>Known limitation:</b> this assumes a 2-decimal-place currency for
-     * every code, matching the existing {@code CreateManualPaymentRequest}
-     * validation ({@code amount} is a plain {@link BigDecimal}, no
-     * currency-aware scale). Zero-decimal currencies (e.g. JPY) or
-     * 3-decimal currencies (e.g. BHD) are not specifically handled — the same
-     * simplification already accepted in V1__init.sql's design notes for the
-     * manual payment path. A full ISO 4217 minor-unit table is out of scope
-     * for this increment.</p>
+     * <p>Uses {@link Currency#getDefaultFractionDigits()} (ISO 4217) rather
+     * than assuming 2 decimals for every currency — a fixed x100 previously
+     * silently produced a charge 100x too large for zero-decimal currencies
+     * like JPY instead of erroring.</p>
+     *
+     * @throws PaymentProviderException if the currency code isn't a valid
+     *     ISO 4217 code Stripe/the JVM recognizes
      */
-    private static long toSmallestCurrencyUnit(BigDecimal amount) {
-        return amount.setScale(2, RoundingMode.HALF_UP)
-                .movePointRight(2)
+    private static long toSmallestCurrencyUnit(BigDecimal amount, String currencyCode) {
+        int fractionDigits;
+        try {
+            fractionDigits = Currency.getInstance(currencyCode.toUpperCase()).getDefaultFractionDigits();
+        } catch (IllegalArgumentException ex) {
+            throw new PaymentProviderException("Stripe", ex);
+        }
+        if (fractionDigits < 0) {
+            // Pseudo-currencies (e.g. XXX) report -1 fraction digits; Stripe
+            // doesn't support them, fail fast instead of guessing a scale.
+            throw new PaymentProviderException("Stripe",
+                    new IllegalArgumentException("Currency " + currencyCode + " has no defined minor unit"));
+        }
+        return amount.setScale(fractionDigits, RoundingMode.HALF_UP)
+                .movePointRight(fractionDigits)
                 .longValueExact();
     }
 }

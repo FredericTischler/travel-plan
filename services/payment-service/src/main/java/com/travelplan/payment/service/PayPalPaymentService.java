@@ -21,7 +21,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Currency;
 import java.util.List;
 
 /**
@@ -67,7 +69,7 @@ public class PayPalPaymentService {
     public PayPalPaymentResponse createOrder(CreatePayPalPaymentRequest request) {
         AmountWithBreakdown amount = new AmountWithBreakdown.Builder(
                 request.getCurrency(),
-                request.getAmount().setScale(2, RoundingMode.HALF_UP).toPlainString())
+                formatAmount(request.getAmount(), request.getCurrency()))
                 .build();
         PurchaseUnitRequest purchaseUnit = new PurchaseUnitRequest.Builder(amount).build();
         OrderRequest orderRequest = new OrderRequest.Builder(CheckoutPaymentIntent.CAPTURE, List.of(purchaseUnit))
@@ -97,5 +99,34 @@ public class PayPalPaymentService {
                 PaymentProvider.PAYPAL, order.getId());
         Payment saved = paymentRepository.save(payment);
         return PayPalPaymentResponse.from(saved, approveUrl);
+    }
+
+    /**
+     * Formats a decimal amount with the exact number of decimal places
+     * PayPal's Orders API requires for the given currency (0 for JPY, 3 for
+     * BHD, 2 for most others — ISO 4217 via {@link Currency}).
+     *
+     * <p>Previously hardcoded to 2 decimals for every currency: PayPal
+     * validates decimal precision server-side and rejects a mismatched
+     * value (e.g. "1000.00" for JPY), so every zero/three-decimal-currency
+     * order failed with a 502 — not documented anywhere before this fix.</p>
+     *
+     * @throws PaymentProviderException if the currency code isn't a valid
+     *     ISO 4217 code the JVM recognizes
+     */
+    private static String formatAmount(BigDecimal amount, String currencyCode) {
+        int fractionDigits;
+        try {
+            fractionDigits = Currency.getInstance(currencyCode.toUpperCase()).getDefaultFractionDigits();
+        } catch (IllegalArgumentException ex) {
+            throw new PaymentProviderException("PayPal", ex);
+        }
+        if (fractionDigits < 0) {
+            // Pseudo-currencies (e.g. XXX) report -1 fraction digits; PayPal
+            // doesn't support them, fail fast instead of guessing a scale.
+            throw new PaymentProviderException("PayPal",
+                    new IllegalArgumentException("Currency " + currencyCode + " has no defined minor unit"));
+        }
+        return amount.setScale(fractionDigits, RoundingMode.HALF_UP).toPlainString();
     }
 }
