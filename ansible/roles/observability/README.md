@@ -117,7 +117,7 @@ binaire Go — c'est la mesure qui l'a montré, pas une intuition.
 
 ---
 
-## 4. Ce que le rôle ne fait pas — et qui doit donc être fait à la main
+## 4. Raccordement au reste de la stack — câblé
 
 ### Mot de passe admin Grafana
 
@@ -126,10 +126,28 @@ valeur vient de `/opt/travel-plan/.env`, dont le rôle **`app-secrets`** est le
 propriétaire **unique** (deux rôles templatant le même fichier s'écraseraient à
 chaque run — idempotence violée).
 
-```bash
-vault kv put secret/observability/grafana password="$(openssl rand -base64 32)"
-# puis déclarer le mapping côté app-secrets et le rejouer
+Ce secret suit désormais la chaîne standard du projet, comme tous les autres :
+
 ```
+vault/defaults/main.yml   secret/observability/grafana  (clé `password`)
+        ▼
+app-secrets               app_secrets_vault_path_observability_grafana
+        ▼
+/opt/travel-plan/.env     GRAFANA_ADMIN_PASSWORD=...
+        ▼
+Compose au `up`           GF_SECURITY_ADMIN_PASSWORD
+```
+
+```bash
+ansible-playbook ansible/roles/vault/test-local.yml --tags provision \
+  -e vault_addr=http://<ip-conteneur-vault>:8200
+ansible-playbook ansible/roles/app-secrets/test-local.yml \
+  -e app_secrets_vault_read=true -e vault_addr=http://<ip-conteneur-vault>:8200
+```
+
+`vault/defaults/main.yml` ne porte qu'un placeholder `changeme_grafana_admin` :
+la valeur réelle se fournit en surcharge (`-e`, ou `ansible-vault`), jamais dans
+le dépôt.
 
 Le `:?` de `${GRAFANA_ADMIN_PASSWORD:?…}` n'est pas décoratif : si la variable
 manque, **`docker compose up` refuse de démarrer** au lieu de laisser Grafana
@@ -137,21 +155,42 @@ retomber sur son `admin/admin` par défaut. Une UI d'observabilité ouverte à t
 venant derrière la gateway est un incident ; un démarrage qui refuse de partir
 est un message.
 
+> **Comportement propre à Grafana, à connaître.** `GF_SECURITY_ADMIN_PASSWORD`
+> n'est appliqué qu'à la **première** initialisation de la base interne
+> (`grafana-data`). Changer la valeur du secret sur un volume existant ne rejoue
+> **pas** le mot de passe : il faut le changer dans l'UI, ou supprimer le volume.
+> Contrairement au cas SonarQube, rien ne casse — c'est seulement le mot de passe
+> de connexion qui reste l'ancien.
+
 ### Inclusion dans le Compose assemblé
 
-`/opt/travel-plan/docker-compose.yml` est rendu par le rôle **`compose-assembly`**
-et n'inclut pas encore `observability/compose.observability.yml`. Ce n'est pas un
-oubli de ce rôle : `compose-assembly` est un **autre rôle**, et le périmètre
-d'écriture d'un incrément est un rôle et un seul. L'ajout à faire, côté
-`compose-assembly` :
+`/opt/travel-plan/docker-compose.yml`, rendu par le rôle **`compose-assembly`**,
+inclut désormais `observability/compose.observability.yml` derrière le flag
+`assembly_observability_enabled` (`false` par défaut : un `include:` est résolu
+quel que soit le `--profile`, donc un fragment absent du disque casserait aussi
+le rendu de `core` et `full`).
 
-- un `include:` de `observability/compose.observability.yml`, derrière un flag
-  `assembly_observability_enabled` (comme `assembly_jenkins_enabled`) ;
-- un merge `profiles: [observability]` sur `loki`, `promtail` et `grafana` ;
-- **ajouter `observability` à la liste de profils de `traefik`** (aujourd'hui
-  `[core, full, ci]`) — sinon `--profile observability` seul monterait Grafana
-  sans la gateway qui le route, et l'UI serait injoignable. Même raisonnement
+Côté `compose-assembly` :
+
+- `include:` de `observability/compose.observability.yml` (chemin **relatif**) ;
+- merge `profiles: [observability]` sur `loki`, `promtail` **et** `grafana` ;
+- `observability` **ajouté à la liste de profils de `traefik`** — sans quoi
+  `--profile observability` seul monterait Grafana sans la gateway qui le route,
+  et l'UI serait injoignable. Le piège est silencieux : le conteneur démarre,
+  passe `healthy`, simplement personne ne peut l'atteindre. Même raisonnement
   que celui déjà appliqué pour l'UI Jenkins.
+
+```bash
+ansible-playbook ansible/roles/compose-assembly/test-local.yml -K \
+  -e assembly_observability_enabled=true [...autres flags...]
+
+# plus aucun -f manuel :
+docker compose --profile full --profile observability up -d
+```
+
+**Vérifié réellement** : `docker compose --profile observability config
+--services` rend `grafana loki promtail traefik`, et
+`https://grafana.localhost` répond 302 (redirection de login) à travers Traefik.
 
 ---
 

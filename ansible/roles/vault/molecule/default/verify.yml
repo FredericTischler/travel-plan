@@ -140,6 +140,35 @@
         fail_msg: "infra/postgres-superuser absent ou sans cle password."
         success_msg: "infra/postgres-superuser OK (cle password presente)."
 
+    # ---- 2ter) Secrets d'OUTILLAGE (SonarQube, Grafana) ---------------------
+    # Meme statut que infra/postgres-superuser : lus par Ansible seul (token
+    # root), volontairement hors des policies par service. On verifie donc leur
+    # PRESENCE et leur cle `password` — pas qu'une policy y donne acces, ce qui
+    # serait au contraire une regression.
+    - name: "Read tooling secrets (sonarqube/db, observability/grafana)"
+      community.hashi_vault.vault_kv2_get:
+        url: "{{ vault_addr }}"
+        auth_method: token
+        token: "{{ root_token }}"
+        engine_mount_point: "{{ kv_mount }}"
+        path: "{{ item }}"
+      loop:
+        - "sonarqube/db"
+        - "observability/grafana"
+      register: s_tooling
+      no_log: true
+
+    - name: "Assert tooling secrets present avec cle password"
+      ansible.builtin.assert:
+        that:
+          - "s_tooling.results | map(attribute='data.data') | selectattr('password', 'defined') | list | length == 2"
+        fail_msg: >-
+          sonarqube/db ou observability/grafana absent, ou sans cle password :
+          le .env rendu par app-secrets aurait une variable VIDE et
+          `docker compose up` echouerait (ou pire, Grafana repartirait sur
+          admin/admin).
+        success_msg: "sonarqube/db et observability/grafana OK (cle password presente)."
+
     # ---- 3) Les 3 policies par service existent -----------------------------
     - name: "Read the 3 service policies"
       community.hashi_vault.vault_read:

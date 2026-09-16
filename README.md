@@ -47,11 +47,11 @@ Modèle opératoire : **Ansible provisionne et rend des fragments Compose**,
 |---|---|
 | `docker-host` | Prépare l'hôte Ubuntu : pré-check non destructif des paquets distro conflictuels (échoue au lieu de supprimer), clé GPG + dépôt APT Docker en deb822, installe `docker-ce`/`cli`/`containerd.io`/`buildx`/`compose-plugin`, active le démon, ajoute les utilisateurs au groupe `docker`. |
 | `postgres` | Rend `compose.postgres.yml` (image épinglée, `data-net`, `mem_limit: 256m`, healthcheck, **aucun port publié**). Crée 2 bases (`identity_db`, `payment_db`) et 2 comptes `NOSUPERUSER/NOCREATEDB/NOCREATEROLE` propriétaires chacun de leur seule base. Révoque `CONNECT` à `PUBLIC` puis l'accorde au seul propriétaire → cloisonnement croisé effectif. Peut lire depuis Vault les mots de passe des comptes applicatifs qu'il provisionne (`postgres_vault_read`, `false` par défaut) — lecture cantonnée à son bloc `provision`, le rôle **ne touche pas** au `.env`. Ne crée **aucune** table (Flyway côté services). |
-| `app-secrets` | Propriétaire **unique** de `/opt/travel-plan/.env`, le fichier d'environnement runtime auto-chargé par Compose. Lit les secrets dans Vault (KV v2, mount `secret` : `infra/postgres-superuser`, les `*/db` des services, `shared/jwt`) et les matérialise dans un `.env` rendu intégralement par un seul `template` — un fichier, un propriétaire, sinon deux rôles s'écraseraient l'un l'autre à chaque run. Piloté par `app_secrets_vault_read` (`false` par défaut) : à `false`, no-op intégral (aucune lecture Vault, aucun fichier écrit), ce qui le rend Molecule-safe comme `postgres_vault_read`. |
+| `app-secrets` | Propriétaire **unique** de `/opt/travel-plan/.env`, le fichier d'environnement runtime auto-chargé par Compose. Lit les secrets dans Vault (KV v2, mount `secret` : `infra/postgres-superuser`, les `*/db` des services, `shared/jwt`, et les deux secrets d'outillage `sonarqube/db` → `SONARQUBE_DB_PASSWORD` et `observability/grafana` → `GRAFANA_ADMIN_PASSWORD`) et les matérialise dans un `.env` rendu intégralement par un seul `template` — un fichier, un propriétaire, sinon deux rôles s'écraseraient l'un l'autre à chaque run. Piloté par `app_secrets_vault_read` (`false` par défaut) : à `false`, no-op intégral (aucune lecture Vault, aucun fichier écrit), ce qui le rend Molecule-safe comme `postgres_vault_read`. |
 | `neo4j` | Rend `compose.neo4j.yml` : image épinglée, `data-net`, `mem_limit: 1g`, volume nommé, healthcheck, aucun port publié. |
-| `vault` | Rend `compose.vault.yml` (Vault **dev mode**, `data-net`, `mem_limit: 96m`, root token via variable d'env, aucun port publié). Vérifie le moteur KV v2 sur `secret/`, écrit 7 chemins de secrets runtime (`infra/postgres-superuser`, `identity/db`, `payment/db`, `payment/stripe`, `payment/paypal`, `travel/db`, `shared/jwt`) et pose 3 policies cloisonnées (`identity-policy`, `payment-policy`, `travel-policy`), chacune limitée à son propre préfixe. |
+| `vault` | Rend `compose.vault.yml` (Vault **dev mode**, `data-net`, `mem_limit: 96m`, root token via variable d'env, aucun port publié). Vérifie le moteur KV v2 sur `secret/`, écrit 9 chemins de secrets runtime (`infra/postgres-superuser`, `identity/db`, `payment/db`, `payment/stripe`, `payment/paypal`, `travel/db`, `shared/jwt`, plus les deux secrets d'outillage `sonarqube/db` et `observability/grafana`) et pose 3 policies cloisonnées (`identity-policy`, `payment-policy`, `travel-policy`), chacune limitée à son propre préfixe. |
 | `traefik` | La gateway : **seul rôle publiant un port** (443) et seul à chevaucher `edge-net` + `backend-net`. Rend la config statique (entrypoint `websecure`, provider Docker avec `exposedByDefault: false`, provider file, endpoint `ping`), la config dynamique TLS, et génère un certificat auto-signé (mkcert si présent, sinon openssl ; idempotent via `creates:`). Socket Docker monté en lecture seule (`:ro`). Dashboard Traefik désactivé par défaut. |
-| `compose-assembly` | Crée les 3 réseaux bridge via `community.docker.docker_network` (Ansible en est propriétaire, les fragments les déclarent `external: true`) et rend le `docker-compose.yml` top-level qui assemble les fragments via `include:` et applique les profils. |
+| `compose-assembly` | Crée les 3 réseaux bridge via `community.docker.docker_network` (Ansible en est propriétaire, les fragments les déclarent `external: true`) et rend le `docker-compose.yml` top-level qui assemble **tous** les fragments du projet via `include:` — y compris `jenkins`, `sonarqube` et `observability`, chacun derrière son flag — et applique les profils. Calcule la liste de profils de `traefik` : tout profil contenant un service routé doit embarquer la gateway, sinon l'UI démarre injoignable. |
 | `jenkins` | Le contrôleur CI (profil Compose `ci`) : rend `compose.jenkins.yml` (image épinglée, volume nommé pour `JENKINS_HOME`, `backend-net`, aucun port publié, route Traefik par labels) et provisionne 3 jobs Pipeline déclenchés à la main, un par service. |
 | `sonarqube` | Le serveur d'analyse qualité (profil Compose `ci`, le même que `jenkins`) : rend `compose.sonarqube.yml` déclarant SonarQube Community **et sa propre base Postgres dédiée** (conteneur, volume et réseau distincts de la Postgres applicative, sur un réseau `internal`), les **trois** heaps JVM bornées explicitement (Web + Compute Engine + Elasticsearch embarqué vivent dans la même cgroup), aucun port publié, route Traefik sur `sonarqube.localhost`. Pose aussi sur l'**hôte** les sysctl exigés par l'Elasticsearch embarqué (`vm.max_map_count`, `fs.file-max`) : non namespacés, donc impossibles à poser depuis Compose. Ne crée **aucun** token et ne configure rien via l'API authentifiée (procédure manuelle documentée). |
 | `observability` | Le logging centralisé (profil Compose dédié `observability`) : rend les configs **Loki** (monolithique, stockage filesystem, schéma TSDB v13, rétention 7 j avec compactor actif), **Promtail** (découverte par l'API Docker, socket en lecture seule, liste blanche sur les conteneurs applicatifs, extraction du JSON émis par les services) et la **datasource Grafana** pré-provisionnée, plus le fragment Compose des 3 conteneurs. Loki et Promtail vivent sur un réseau `internal`, **sans port ni route** : l'API de Loki n'a aucune authentification, le seul accès humain aux logs est Grafana (`grafana.localhost`). |
@@ -91,6 +91,22 @@ absolu**, via des flags dans `compose-assembly/defaults/main.yml` :
 
 Les chemins (`assembly_*_fragment`) sont vides par défaut et doivent être fournis en
 `-e` : ils varient d'une machine à l'autre.
+
+Les fragments d'**outillage**, eux, sont rendus par un rôle Ansible sous
+`/opt/travel-plan/` : chemin **relatif**, rien à fournir en `-e`. Ils restent
+néanmoins derrière un flag, parce qu'un `include:` Compose est résolu **quel que
+soit** le `--profile` — inclure en dur un fragment absent du disque casserait aussi
+le rendu de `core` et de `full` :
+
+| Flag | Défaut | Fragment inclus |
+|---|---|---|
+| `assembly_jenkins_enabled` | `false` | `jenkins/compose.jenkins.yml` |
+| `assembly_sonarqube_enabled` | `false` | `sonarqube/compose.sonarqube.yml` |
+| `assembly_observability_enabled` | `false` | `observability/compose.observability.yml` |
+
+Une fois ces flags passés à `true` lors du rendu, **plus aucun `-f` manuel** n'est
+nécessaire : `docker compose --profile ci up -d` et
+`docker compose --profile full --profile observability up -d` suffisent.
 
 ### Réplicas & load balancing
 
@@ -319,9 +335,12 @@ attendent et qui est **absent ou partiel** dans le dépôt aujourd'hui.
   absence de condition ; (2) la **couverture est à 0 %** (JaCoCo n'est branché
   nulle part), ce qui **fera échouer** le gate dès la deuxième analyse. Limites
   connues, pas un test truqué. Détail : `ansible/roles/sonarqube/README.md`.
-- **Le token Sonar n'est ni dans le dépôt ni provisionné par Ansible** : Vault
-  n'est pas câblé à la chaîne CI, et le contrat du projet interdit autant le
-  credential en clair que le placeholder « temporaire ». Procédure manuelle
+- **Le token Sonar n'est ni dans le dépôt ni provisionné par Ansible.** Le mot de
+  passe de la base SonarQube, lui, passe désormais par Vault → `app-secrets` →
+  `.env` comme tous les autres secrets ; le **token d'analyse** est d'une autre
+  nature : il n'existe qu'après le premier démarrage du serveur et se crée via son
+  API authentifiée. Le contrat du projet interdit autant le credential en clair que
+  le placeholder « temporaire ». Procédure manuelle
   documentée (génération API + dépôt dans le credential store de Jenkins sous
   l'ID `sonarqube-token`). Les stages Sonar sont **conditionnels** : sans la
   variable `SONAR_HOST_URL`, les pipelines tournent sans analyse au lieu d'échouer.
@@ -419,11 +438,15 @@ attendent et qui est **absent ou partiel** dans le dépôt aujourd'hui.
   l'intégration d'`identity-service` est considérée prouvée bout-en-bout.
 - ~~Pas de rôle `observability`~~ → **le rôle `observability` existe et est testé**
   (Loki + Promtail + Grafana, scénario Molecule complet : 28 assertions,
-  idempotence `changed=0`). Il reste **à inclure dans le Compose assemblé** :
-  `compose-assembly` est un autre rôle, et cet ajout — un `include:` derrière un
-  flag, un merge `profiles: [observability]`, et l'ajout de `observability` à la
-  liste de profils de `traefik` pour que la route Grafana soit servie — fera
-  l'objet d'un incrément dédié. Même remarque pour le rôle `sonarqube`.
+  idempotence `changed=0`). ~~Il reste à inclure dans le Compose assemblé.~~
+  **Corrigé** : `compose-assembly` inclut désormais les fragments `sonarqube` et
+  `observability` derrière `assembly_sonarqube_enabled` /
+  `assembly_observability_enabled`, applique `profiles: [ci]` /
+  `profiles: [observability]` sur leurs services, et **ajoute ces profils à la liste
+  de `traefik`** — sans quoi Grafana et SonarQube démarreraient sans la gateway qui
+  les route, `healthy` et injoignables. Les deux secrets correspondants
+  (`SONARQUBE_DB_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`) passent par Vault →
+  `app-secrets` → `.env`, comme tous les autres : plus aucun `export` shell.
 - Pas de rôle `common` (annoncé dans `ansible/README.md`, n'existe pas).
 - **Pas de Kubernetes** (bonus du sujet) : aucun manifeste, aucun chart. Choix assumé
   (contrainte 8 Go, Compose seul).

@@ -29,6 +29,10 @@
     - "{{ app_secrets_vault_path_payment_paypal }}"
     - "{{ app_secrets_vault_path_travel_db }}"
     - "{{ app_secrets_vault_path_shared_jwt }}"
+    # Secrets d'outillage (SonarQube / Grafana) : memes lecture et
+    # materialisation que les autres, cf. defaults/main.yml.
+    - "{{ app_secrets_vault_path_sonarqube_db }}"
+    - "{{ app_secrets_vault_path_observability_grafana }}"
   register: _vault_app_secrets
   no_log: true
   when: app_secrets_vault_read | bool
@@ -84,6 +88,16 @@
       {{ _vault_app_secrets.results
          | selectattr('item', 'equalto', app_secrets_vault_path_shared_jwt)
          | map(attribute='secret.signing_key')
+         | first }}
+    app_secrets_sonarqube_db_password: >-
+      {{ _vault_app_secrets.results
+         | selectattr('item', 'equalto', app_secrets_vault_path_sonarqube_db)
+         | map(attribute='secret.password')
+         | first }}
+    app_secrets_grafana_admin_password: >-
+      {{ _vault_app_secrets.results
+         | selectattr('item', 'equalto', app_secrets_vault_path_observability_grafana)
+         | map(attribute='secret.password')
          | first }}
   no_log: true
   when: app_secrets_vault_read | bool

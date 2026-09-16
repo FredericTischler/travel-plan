@@ -47,7 +47,7 @@
     # (typiquement : template mis a jour mais pas la boucle) rendrait un .env
     # avec une variable VIDE — Compose l'accepterait et le `:?` cote fragment ne
     # se declencherait pas : bug silencieux, exactement ce que ce bloc attrape.
-    # Couverture IDENTIQUE pour les 9 secrets, identity inclus.
+    # Couverture IDENTIQUE pour les 11 secrets, identity inclus.
     # Cas a DEUX cles : payment/stripe et payment/paypal partagent chacun un
     # unique chemin Vault pour deux entrees de la boucle (suffix identique,
     # fact/env_var distincts). Les assertions (a)/(b) sont alors verifiees deux
@@ -110,5 +110,17 @@
           vault_path: shared/jwt
           fact: jwt_signing_key
           env_var: JWT_SIGNING_KEY
+        # Secrets d'OUTILLAGE : ils ne servent aucun service applicatif, mais le
+        # cablage a verifier est EXACTEMENT le meme (un secret a moitie cable
+        # rendrait une variable vide, et la reference ${...} cote fragment
+        # Compose ne s'en apercevrait pas forcement).
+        - suffix: sonarqube_db
+          vault_path: sonarqube/db
+          fact: sonarqube_db_password
+          env_var: SONARQUBE_DB_PASSWORD
+        - suffix: observability_grafana
+          vault_path: observability/grafana
+          fact: grafana_admin_password
+          env_var: GRAFANA_ADMIN_PASSWORD
       loop_control:
         label: "{{ item.env_var }}"

@@ -73,6 +73,18 @@ app_secrets_vault_path_payment_paypal: "payment/paypal"
 app_secrets_vault_path_travel_db: "travel/db"
 app_secrets_vault_path_shared_jwt: "shared/jwt"
 
+# --- Chemins Vault d'OUTILLAGE (hors chaine applicative) ---------------------
+# sonarqube/db            -> password    (base dediee SonarQube, profil `ci`)
+# observability/grafana   -> password    (compte admin Grafana, profil `observability`)
+#
+# Ces deux secrets ne servent AUCUN service applicatif : ils alimentent des
+# conteneurs d'outillage que Compose monte a la demande. Ils passent malgre tout
+# par ici, et pas par un export shell, pour une raison simple : `.env` a UN
+# proprietaire (ce role). Un secret fourni a la main hors de ce fichier
+# disparait au premier re-run d'app-secrets, qui reecrit le .env en entier.
+app_secrets_vault_path_sonarqube_db: "sonarqube/db"
+app_secrets_vault_path_observability_grafana: "observability/grafana"
+
 # --- Variables Vault pour le run reel ---------------------------------------
 # Ignorees quand app_secrets_vault_read: false. A surcharger via -e en prod.
 # Coherentes avec vault/defaults/main.yml et postgres/defaults/main.yml.

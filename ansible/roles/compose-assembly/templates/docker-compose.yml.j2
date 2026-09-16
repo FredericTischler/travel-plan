@@ -7,13 +7,19 @@
 # PROFILS (cf. docs/architecture-decisions.md §4) :
 #   core : postgres + vault (dev quotidien, ~350 Mo, laisse place à IDE + navigateur)
 #   full : postgres + vault + neo4j (intégration + démo, IDE fermé)
-#   ci   : jenkins (+ traefik pour joindre son UI) — À LA DEMANDE (docs §8) :
-#          la stack CI ne cohabite PAS avec la stack applicative sur 8 Go.
+#   ci   : jenkins + sonarqube (+ traefik pour joindre leurs UI) — À LA DEMANDE
+#          (docs §8) : la stack CI ne cohabite PAS avec la stack applicative
+#          sur 8 Go. Les deux montent ENSEMBLE : le pipeline enchaîne
+#          `mvn verify` puis `sonar:sonar`.
+#   observability : loki + promtail + grafana (+ traefik pour l'UI Grafana).
+#          Profil ADDITIF, à combiner avec core/full — il observe la stack
+#          applicative, donc il n'a d'intérêt que si elle tourne.
 #
 # USAGE :
 #   docker compose --profile core up -d    # dev quotidien
 #   docker compose --profile full up -d    # stack complète
 #   docker compose --profile ci   up -d    # CI seule (stack applicative down)
+#   docker compose --profile full --profile observability up -d   # + logs
 #   docker compose --profile full down     # nettoyage
 
 include:
@@ -31,6 +37,21 @@ include:
   # Gardé derrière un flag car les `include:` sont résolus quel que soit le
   # --profile : sans le rôle joué, l'include casserait AUSSI core et full.
   - path: {{ assembly_jenkins_fragment }}
+{% endif %}
+{% if assembly_sonarqube_enabled %}
+  # sonarqube : fragment RENDU par le rôle Ansible `sonarqube` sous
+  # {{ assembly_compose_dir }}/sonarqube/ — chemin RELATIF, même statut que
+  # jenkins. Le fragment déclare AUSSI la base dédiée `sonarqube-db` et le
+  # réseau privé `sonarqube-net` (seul réseau du projet possédé par Compose).
+  # Même flag protecteur que jenkins : sans le rôle joué, l'include casserait
+  # core et full, pas seulement ci.
+  - path: {{ assembly_sonarqube_fragment }}
+{% endif %}
+{% if assembly_observability_enabled %}
+  # observability : fragment RENDU par le rôle Ansible `observability` sous
+  # {{ assembly_compose_dir }}/observability/ — chemin RELATIF (loki, promtail,
+  # grafana + le réseau privé `observability-net`). Même flag protecteur.
+  - path: {{ assembly_observability_fragment }}
 {% endif %}
 {% if assembly_identity_enabled %}
   # identity-service : fragment STATIQUE du dépôt (build depuis les sources),
@@ -73,18 +94,24 @@ services:
   # quotidien. Il doit donc rester dans "core" ; l'exclure rendrait la stack core
   # inaccessible de l'extérieur. Profils appliqués par merge sur le service inclus
   # (même mécanisme que postgres/vault ci-dessus).
-{% if assembly_jenkins_enabled %}
-  # `ci` AJOUTÉ à la liste (core/full inchangés) : l'UI Jenkins est exposée par
-  # une route Traefik (labels sur le service jenkins), donc `--profile ci` seul
-  # doit faire monter la gateway, sinon l'UI serait injoignable. Ajout émis
-  # UNIQUEMENT si assembly_jenkins_enabled=true => le rendu par défaut reste
-  # strictement identique à ce qu'il était.
-  traefik:
-    profiles: [core, full, ci]
-{% else %}
-  traefik:
-    profiles: [core, full]
+{% set traefik_profiles = ['core', 'full'] %}
+{% if assembly_jenkins_enabled or assembly_sonarqube_enabled %}
+{%   set _ = traefik_profiles.append('ci') %}
 {% endif %}
+{% if assembly_observability_enabled %}
+{%   set _ = traefik_profiles.append('observability') %}
+{% endif %}
+  # RÈGLE : tout profil qui contient un service routé par Traefik doit figurer
+  # ici, sinon `--profile <ce profil>` seul monterait le service SANS la gateway
+  # qui l'expose, et son UI serait injoignable. Le piège est silencieux — le
+  # conteneur démarre, healthy, simplement personne ne peut l'atteindre.
+  #   `ci`            : UI Jenkins et UI SonarQube, toutes deux routées par labels.
+  #   `observability` : UI Grafana, routée par labels (Loki et Promtail, eux, ne
+  #                     sont routés par rien — délibérément, cf. rôle observability).
+  # core/full restent inconditionnels ; les ajouts ne sont émis que si le flag
+  # correspondant est actif => le rendu par défaut reste strictement inchangé.
+  traefik:
+    profiles: [{{ traefik_profiles | join(', ') }}]
 {% if assembly_identity_enabled %}
 
   # identity-service : profil [full] uniquement pour l'instant (pas core).
@@ -123,4 +150,34 @@ services:
   # postgres/vault/neo4j ci-dessus).
   jenkins:
     profiles: [ci]
+{% endif %}
+{% if assembly_sonarqube_enabled %}
+
+  # sonarqube + sa base dédiée : profil [ci] EXCLUSIVEMENT, le MÊME que jenkins.
+  # docs/architecture-decisions.md §8 : la stack CI ne cohabite pas avec la
+  # stack applicative. SonarQube est le poste le plus lourd du projet (~2,1 Go
+  # mesurés : Web + Compute Engine + Elasticsearch, trois JVM dans une cgroup).
+  # Les DEUX services portent le profil : sans profil sur la base, `--profile ci`
+  # monterait SonarQube seul et sa migration de schéma échouerait faute de base.
+  sonarqube:
+    profiles: [ci]
+
+  sonarqube-db:
+    profiles: [ci]
+{% endif %}
+{% if assembly_observability_enabled %}
+
+  # loki / promtail / grafana : profil [observability] EXCLUSIVEMENT.
+  # Profil ADDITIF, jamais fusionné dans core/full/ci — cf. le rôle
+  # `observability` pour le chiffrage (~450 Mo mesurés, trois binaires Go).
+  # Les TROIS services le portent : un stack de collecte amputé d'un maillon
+  # (Promtail sans Loki, Grafana sans source) ne rend aucun service.
+  loki:
+    profiles: [observability]
+
+  promtail:
+    profiles: [observability]
+
+  grafana:
+    profiles: [observability]
 {% endif %}

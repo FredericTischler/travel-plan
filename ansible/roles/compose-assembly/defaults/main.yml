@@ -89,6 +89,42 @@ assembly_travel_fragment: ""
 assembly_jenkins_enabled: false
 assembly_jenkins_fragment: "jenkins/compose.jenkins.yml"
 
+# --- Fragment sonarqube (RENDU par le rôle Ansible `sonarqube`) --------------
+# Même statut que jenkins : rôle Ansible qui rend son fragment sous
+# assembly_compose_dir => chemin RELATIF, rien à fournir en -e.
+#
+# MÊME PROFIL QUE JENKINS (`ci`), et c'est délibéré : le pipeline enchaîne
+# `mvn verify` puis `sonar:sonar`. Lancer la CI sans SonarQube donnerait un
+# pipeline qui échoue sur son étape d'analyse ; les deux montent ensemble.
+#
+# DÉFAUT = false, exactement pour les deux raisons de jenkins :
+#   1. Les `include:` sont résolus quel que soit le --profile — inclure un
+#      fragment absent du disque casserait AUSSI core et full.
+#   2. La CI est « à la demande » (docs §8), et SonarQube est le poste RAM le
+#      plus lourd du projet (~2,1 Go mesurés, trois JVM).
+# À activer :
+#   -e assembly_sonarqube_enabled=true
+assembly_sonarqube_enabled: false
+assembly_sonarqube_fragment: "sonarqube/compose.sonarqube.yml"
+
+# --- Fragment observability (RENDU par le rôle Ansible `observability`) ------
+# Loki + Promtail + Grafana. Même statut que jenkins/sonarqube : chemin RELATIF.
+#
+# PROFIL DÉDIÉ `observability`, ADDITIF aux autres — ni core, ni full, ni ci :
+#   - pas `core` : +450 Mo en permanence romprait le calibrage du dev quotidien ;
+#   - pas `full` : on n'a pas toujours besoin de lire les logs en démo ;
+#   - pas `ci`   : ce stack observe la stack APPLICATIVE ; le monter avec
+#     Jenkins/SonarQube, services éteints, ne collecterait rien.
+# S'utilise donc en combinaison : `--profile full --profile observability`.
+#
+# DÉFAUT = false : même raison n°1 que jenkins/sonarqube (include résolu quel
+# que soit le profil). Le flag protège le rendu de core/full sur une machine où
+# le rôle `observability` n'a pas encore été joué.
+# À activer :
+#   -e assembly_observability_enabled=true
+assembly_observability_enabled: false
+assembly_observability_fragment: "observability/compose.observability.yml"
+
 # Réseaux Docker à créer (Ansible en est propriétaire, driver bridge).
 assembly_networks:
   - name: "edge-net"

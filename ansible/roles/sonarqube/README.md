@@ -18,37 +18,70 @@ les **procédures manuelles** qui restent à la charge de l'opérateur.
 
 ## 1. Ce que le rôle ne fait pas — et qui doit donc être fait à la main
 
-Trois choses ne peuvent pas être provisionnées par ce rôle, pour une seule et
-même raison : **elles exigent un credential**, et Vault n'est pas encore câblé à
-la chaîne CI. Le contrat du projet interdit à la fois le credential en clair et
-le placeholder « temporaire ». On s'arrête donc proprement et on documente.
+Deux choses ne peuvent pas être provisionnées par ce rôle, pour une seule et
+même raison : **elles exigent un credential SonarQube**, c'est-à-dire un compte
+qui n'existe qu'après le premier démarrage du serveur. Le contrat du projet
+interdit à la fois le credential en clair et le placeholder « temporaire ». On
+s'arrête donc proprement et on documente.
 
 | À faire à la main | Pourquoi ce n'est pas dans le rôle |
 |---|---|
-| Le mot de passe de la base dédiée (`SONARQUBE_DB_PASSWORD`) | Le `.env` de `/opt/travel-plan` a un propriétaire **unique**, le rôle `app-secrets`. Deux rôles templatant le même fichier s'écraseraient à chaque run (idempotence violée). |
 | Le changement du mot de passe `admin` au premier démarrage | Écriture via l'API authentifiée de SonarQube. |
 | La génération du **token d'analyse** et son dépôt dans Jenkins | Idem, plus : un token est un secret, il n'a rien à faire dans ce dépôt. |
 
+En revanche, deux points qui figuraient ici comme « à faire à la main » ne le
+sont **plus** : le mot de passe de la base dédiée (§2) et l'inclusion du fragment
+dans le Compose assemblé (§7bis) sont désormais câblés.
+
 ---
 
-## 2. Mot de passe de la base dédiée
+## 2. Mot de passe de la base dédiée — câblé, plus rien à faire à la main
 
 Le fragment rendu ne contient **que la référence** `${SONARQUBE_DB_PASSWORD}` ;
-la valeur est résolue par Compose depuis `/opt/travel-plan/.env`.
+la valeur est résolue par Compose depuis `/opt/travel-plan/.env`, dont le rôle
+`app-secrets` est le propriétaire **unique** (deux rôles templatant le même
+fichier s'écraseraient à chaque run — idempotence violée).
 
-Procédure (chemin Vault, cohérent avec les autres secrets du projet) :
+La chaîne est celle de **tous** les autres secrets du projet, sans exception :
+
+```
+vault/defaults/main.yml   secret/sonarqube/db  (clé `password`)
+        │                 déclaré dans vault_secrets, écrit en read-before-write
+        ▼
+app-secrets               lecture vault_kv2_get -> fact -> ligne du .env
+        │                 (app_secrets_vault_path_sonarqube_db)
+        ▼
+/opt/travel-plan/.env     SONARQUBE_DB_PASSWORD=...
+        ▼
+Compose au `up`           POSTGRES_PASSWORD (la base) ET SONAR_JDBC_PASSWORD
+                          (le serveur) — une seule clé, deux consommateurs,
+                          donc jamais de désynchronisation possible.
+```
+
+Comme partout ailleurs, `defaults/main.yml` du rôle `vault` ne porte qu'un
+**placeholder** `changeme_sonarqube_db` : la valeur réelle se fournit en
+surcharge (`-e`, ou fichier chiffré `ansible-vault`), jamais dans le dépôt.
 
 ```bash
-# 1. écrire le secret dans Vault
-vault kv put secret/ci/sonarqube-db password="$(openssl rand -base64 32)"
-
-# 2. déclarer le mapping dans les variables du rôle app-secrets, puis rejouer
-#    app-secrets pour qu'il régénère /opt/travel-plan/.env
+# provisionner le secret puis régénérer le .env
+ansible-playbook ansible/roles/vault/test-local.yml --tags provision \
+  -e vault_addr=http://<ip-conteneur-vault>:8200
+ansible-playbook ansible/roles/app-secrets/test-local.yml \
+  -e app_secrets_vault_read=true -e vault_addr=http://<ip-conteneur-vault>:8200
 ```
 
 Tant que `SONARQUBE_DB_PASSWORD` est absent du `.env`, `docker compose --profile
 ci up -d` démarre une Postgres **sans mot de passe défini** et SonarQube échoue
 sa migration de schéma. C'est un échec bruyant et immédiat, pas un piège silencieux.
+
+> **Piège si la base tourne déjà.** `POSTGRES_PASSWORD` n'est appliqué qu'au
+> **premier** `initdb`. Changer la valeur du secret sur un volume
+> `sonarqube-db-data` déjà initialisé ne change **rien** côté base : SonarQube se
+> connectera alors avec la nouvelle valeur contre une base qui a gardé
+> l'ancienne, et échouera à l'authentification. Deux issues : supprimer le volume
+> (on perd l'historique d'analyses), ou aligner la base à la main —
+> `docker exec travel-plan-sonarqube-db psql -U sonar -d sonar -c "ALTER USER sonar WITH PASSWORD '<nouvelle valeur>'"`
+> puis recréer le conteneur SonarQube.
 
 ---
 
@@ -190,20 +223,37 @@ Deux précisions honnêtes sur ce « OK » :
 
 ---
 
-## 6. Ce que le rôle n'a pas encore : l'inclusion dans le Compose assemblé
+## 6. Inclusion dans le Compose assemblé — fait
 
-`/opt/travel-plan/docker-compose.yml` est rendu par le rôle **`compose-assembly`**
-et n'inclut pas encore `sonarqube/compose.sonarqube.yml`. Tant que ce n'est pas
-fait, `docker compose --profile ci up -d` monte Jenkins + Traefik mais **pas**
-SonarQube.
+`/opt/travel-plan/docker-compose.yml`, rendu par le rôle **`compose-assembly`**,
+inclut désormais `sonarqube/compose.sonarqube.yml` derrière le flag
+`assembly_sonarqube_enabled` (`false` par défaut, même raisonnement que
+`assembly_jenkins_enabled` : un `include:` est résolu **quel que soit** le
+`--profile`, donc inclure en dur un fragment absent du disque casserait aussi le
+rendu de `core` et de `full`).
 
-Ce n'est pas un oubli de ce rôle : `compose-assembly` est un **autre rôle**, et
-le périmètre d'écriture d'un incrément est un rôle et un seul. L'ajout à faire,
-côté `compose-assembly`, tient en deux points :
+Concrètement, côté `compose-assembly` :
 
-- un `include:` de `sonarqube/compose.sonarqube.yml`, derrière un flag
-  `assembly_sonarqube_enabled` (comme `assembly_jenkins_enabled`) ;
-- un merge `profiles: [ci]` sur les services `sonarqube` et `sonarqube-db`.
+- `include:` de `sonarqube/compose.sonarqube.yml` (chemin **relatif** — le rôle
+  rend son fragment sous `assembly_compose_dir`, rien à fournir en `-e`) ;
+- merge `profiles: [ci]` sur `sonarqube` **et** `sonarqube-db` (sans profil sur
+  la base, `--profile ci` monterait le serveur seul et sa migration de schéma
+  échouerait) ;
+- `ci` présent dans la liste de profils de `traefik`, sans quoi l'UI serait
+  injoignable.
+
+```bash
+ansible-playbook ansible/roles/compose-assembly/test-local.yml -K \
+  -e assembly_sonarqube_enabled=true [...autres flags...]
+
+# plus aucun -f manuel :
+docker compose --profile ci up -d
+```
+
+**Vérifié réellement** : `docker compose --profile ci config --services` rend
+`jenkins sonarqube sonarqube-db traefik`, et le `up` correspondant démarre la
+base puis le serveur (`healthy`), UI joignable en HTTP 200 sur
+`https://sonarqube.localhost`.
 
 ---
 

@@ -94,6 +94,33 @@ vault_secrets:
       password: "changeme_neo4j"   # noqa: injecte par Vault en prod
       host: "neo4j"
       port: "7687"
+  # --- Secrets d'OUTILLAGE (hors chaine applicative) ------------------------
+  # Meme statut que infra/postgres-superuser : HORS perimetre des policies
+  # service. Ni identity, ni payment, ni travel n'a de raison de les lire —
+  # seul Ansible (token root) les lit, pour les materialiser dans le .env que
+  # Compose interpole au `up`. Aucune policy n'est donc ajoutee pour eux.
+  #
+  # sonarqube/db : mot de passe de la base DEDIEE a SonarQube (role sonarqube,
+  # profil `ci`). Consomme en SONARQUBE_DB_PASSWORD par DEUX conteneurs a la
+  # fois (POSTGRES_PASSWORD de la base + SONAR_JDBC_PASSWORD du serveur) : une
+  # seule cle, deux consommateurs, donc jamais de desynchronisation possible.
+  - path: "sonarqube/db"
+    data:
+      username: "sonar"
+      password: "changeme_sonarqube_db"   # noqa: injecte par Vault en prod
+      dbname: "sonar"
+      host: "sonarqube-db"
+      port: "5432"
+  # observability/grafana : mot de passe du compte admin Grafana (role
+  # observability, profil `observability`). Consomme en GRAFANA_ADMIN_PASSWORD.
+  # ATTENTION, comportement propre a Grafana : cette valeur n'est appliquee
+  # qu'a la PREMIERE initialisation de sa base interne. La changer ici ne
+  # rejoue pas le mot de passe d'une instance deja provisionnee — il faut
+  # supprimer le volume grafana-data, ou changer le mot de passe dans l'UI.
+  - path: "observability/grafana"
+    data:
+      username: "admin"
+      password: "changeme_grafana_admin"  # noqa: injecte par Vault en prod
   # Secret PARTAGE (perimetre `shared/`) : cle de signature HS256 des JWT.
   # HS256 exige le MEME secret chez l'emetteur (identity) et chez les
   # verificateurs (payment, travel) : ce n'est donc pas un secret par service,
