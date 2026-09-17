@@ -114,6 +114,6 @@ class PayPalCaptureIntegrationTest {
                 "/payments/" + createResponse.getBody().get("id"),
                 org.springframework.http.HttpMethod.GET,
                 new HttpEntity<>(null, captureHeaders), Map.class);
-        assertThat(getResponse.getBody().get("status")).isEqualTo("FAILED");
+        assertThat(getResponse.getBody()).containsEntry("status", "FAILED");
     }
 }
