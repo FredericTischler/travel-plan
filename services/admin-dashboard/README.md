@@ -112,6 +112,21 @@ la liste des utilisateurs, leur modification et leur suppression. Le nom
 Cette dette est côté backend d'abord (le token ne transporte pas de rôle) ; aucun
 contrôle front ne pourrait la combler.
 
+## Tests E2E (Playwright, contre le vrai backend)
+
+`e2e/*.spec.ts` (login, auth-guard, destinations, payments) tournent sans mock,
+contre le vrai `ng serve` (port 4200) et la vraie stack Docker Compose
+(identity/payment/travel-service, Postgres, Neo4j, Vault, Traefik).
+
+```bash
+npm start        # ng serve, dans un terminal séparé
+npm run e2e       # playwright test
+```
+
+**Dernière exécution confirmée : 2026-09-17, 5/5 tests passent** (stack Docker déjà up
+depuis ~21h, `ng serve` déjà démarré depuis la veille — aucune anomalie d'environnement
+rencontrée).
+
 ## Non implémenté
 
 - **Pas de RBAC ni de profil Admin** (voir ci-dessus) : ni côté JWT, ni côté guard.
@@ -126,6 +141,9 @@ contrôle front ne pourrait la combler.
 - **Pas de conteneurisation** : aucun `Dockerfile`, aucun fragment Compose, aucune
   route Traefik pour ce front. Il ne tourne aujourd'hui que via `ng serve` sur
   `http://localhost:4200` (origine autorisée par la config CORS des services).
-- **Couverture de test quasi nulle** : une seule spec (`src/app/app.spec.ts`), qui
-  vérifie uniquement que le composant racine s'instancie. Aucun test des écrans, des
-  services HTTP, du guard ni de l'interceptor.
+- **Couverture de test unitaire quasi nulle** : côté Vitest, une seule spec
+  (`src/app/app.spec.ts`), qui vérifie uniquement que le composant racine s'instancie.
+  Aucun test unitaire des écrans, des services HTTP, du guard ni de l'intercepteur.
+  La couverture fonctionnelle existe côté E2E (voir [Tests E2E](#tests-e2e-playwright-contre-le-vrai-backend)
+  ci-dessus), mais reste limitée à 4 parcours (login, auth-guard, destinations,
+  payments) — pas de couverture E2E pour l'écran utilisateurs ni pour le thème.
