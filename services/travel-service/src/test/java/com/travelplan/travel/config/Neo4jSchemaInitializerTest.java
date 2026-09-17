@@ -56,7 +56,7 @@ class Neo4jSchemaInitializerTest {
     }
 
     @Test
-    void givesUpAfterExhaustingRetriesAndRethrowsTheTransientError() throws Exception {
+    void givesUpAfterExhaustingRetriesAndRethrowsTheTransientError() {
         Neo4jClient neo4jClient = mock(Neo4jClient.class);
         Neo4jClient.UnboundRunnableSpec runnableSpec = mock(Neo4jClient.UnboundRunnableSpec.class);
 
@@ -70,7 +70,7 @@ class Neo4jSchemaInitializerTest {
     }
 
     @Test
-    void doesNotRetryNonTransientErrors() throws Exception {
+    void doesNotRetryNonTransientErrors() {
         Neo4jClient neo4jClient = mock(Neo4jClient.class);
         Neo4jClient.UnboundRunnableSpec runnableSpec = mock(Neo4jClient.UnboundRunnableSpec.class);
 
