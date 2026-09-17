@@ -78,6 +78,38 @@ nodes:
 EOF
 ```
 
+#### Cluster déjà créé, mais ni binaire `kind` ni kubeconfig
+
+Cas rencontré en pratique : le conteneur `travel-plan-control-plane` tourne
+toujours, mais `kind` n'est pas (ou plus) installé et `~/.kube/config` est
+absent — typiquement après un changement de poste ou un nettoyage de `~`.
+`kubectl` retombe alors sur son défaut `http://localhost:8080` et renvoie une
+erreur trompeuse : sur cette machine, 8080 est **Jenkins**, d'où un
+`Authentication required` en HTML au lieu d'une erreur de connexion.
+
+Le kubeconfig se reconstruit depuis le nœud, sans `kind` et sans recréer le
+cluster (ce qui détruirait les volumes) :
+
+```bash
+# Port hôte sur lequel kind a publié l'API server (aléatoire, sur 127.0.0.1)
+docker port travel-plan-control-plane 6443     # -> 127.0.0.1:<PORT>
+
+mkdir -p ~/.kube
+docker exec travel-plan-control-plane cat /etc/kubernetes/admin.conf > ~/.kube/config
+chmod 600 ~/.kube/config
+
+# admin.conf pointe vers https://travel-plan-control-plane:6443, un nom qui ne
+# resout que DANS le reseau Docker. Depuis l'hote, viser le port publie.
+kubectl config set-cluster travel-plan --server=https://127.0.0.1:<PORT>
+kubectl config rename-context kubernetes-admin@travel-plan kind-travel-plan
+
+kubectl get nodes    # doit afficher travel-plan-control-plane Ready
+```
+
+Le certificat de l'API server porte `127.0.0.1` dans ses SAN (kind l'ajoute à la
+création) : aucune option `--insecure-skip-tls-verify` ni `tls-server-name`
+n'est nécessaire, et il ne faut pas en ajouter.
+
 ### 2. Un Ingress Controller
 
 `40-ingress.yaml` est une **déclaration**, pas une implémentation. Sans
@@ -120,6 +152,20 @@ C'est cette seconde forme qui a servi lors du test décrit plus bas. À noter :
 containerd enregistre l'image sous `docker.io/travel-plan/travel-service:0.1.0`,
 ce qui est bien la résolution canonique du tag court écrit dans les manifestes.
 
+Pour savoir si l'injection a déjà été faite — et si l'image du nœud est bien la
+build courante de l'hôte, pas une plus ancienne — comparer les IDs :
+
+```bash
+docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | grep travel-plan
+docker exec travel-plan-control-plane crictl images | grep -E 'travel-plan|postgres|neo4j|vault'
+```
+
+Les douze premiers caractères de l'ID doivent coïncider. S'ils diffèrent, le nœud
+sert une image périmée : recharger. Les images de base (`postgres`, `neo4j`,
+`vault`) gagnent à être injectées de la même façon plutôt que *pull* depuis
+Docker Hub — elles sont déjà sur l'hôte pour le déploiement Compose, et
+l'injection évite ~1,2 Go de téléchargement.
+
 Les manifestes portent tous `imagePullPolicy: IfNotPresent`. Avec `Always`, le
 kubelet tenterait un pull vers Docker Hub, échouerait en `ErrImagePull` et
 **ignorerait l'image pourtant présente localement**.
@@ -140,6 +186,24 @@ set -a && . /opt/travel-plan/.env && set +a
 export VAULT_DEV_ROOT_TOKEN_ID=...   # absent du .env, propre au Vault dev mode
 ./k8s/create-secrets.sh
 ```
+
+Le `.env` fournit neuf des dix variables. La dixième,
+`VAULT_DEV_ROOT_TOKEN_ID`, n'y figure pas : elle est propre au Vault en dev mode
+et vit dans l'environnement du conteneur Vault déjà provisionné par Ansible. Sur
+une machine où Compose tourne, la récupérer sans jamais l'afficher :
+
+```bash
+export VAULT_DEV_ROOT_TOKEN_ID="$(docker inspect travel-plan-vault \
+  --format '{{range .Config.Env}}{{println .}}{{end}}' \
+  | sed -n 's/^VAULT_DEV_ROOT_TOKEN_ID=//p')"
+[ -n "$VAULT_DEV_ROOT_TOKEN_ID" ] || echo 'introuvable : Vault non provisionne'
+```
+
+Le Vault déployé dans le cluster est une instance dev mode **distincte** de
+celle de Compose ; réutiliser le même root token n'est pas une nécessité, c'est
+un choix de parité entre les deux déploiements. Ne jamais substituer une valeur
+inventée : le script échouerait moins vite, mais Vault démarrerait avec un token
+qui ne correspond à rien.
 
 Sinon, exporter les dix variables à la main. Le script échoue immédiatement
 (`${VAR:?...}`) si l'une manque : jamais de valeur par défaut, qui masquerait un
@@ -238,8 +302,54 @@ la simple relecture :
    de Kubernetes exige que la variable soit réellement présente dans
    l'environnement du conteneur.
 
-Le cluster de test a été détruit après validation : ces manifestes sont à
-rejouer avec la procédure ci-dessus, ils ne décrivent pas un cluster maintenu.
+### Seconde exécution — 2026-09-17, sur poste chargé
+
+Rejoué intégralement sur un cluster kind du même type, **pendant que la stack
+Compose complète tournait** (3 services × 2 replicas, Jenkins, SonarQube,
+Traefik, observabilité) : ~750 Mio de RAM disponible sur l'hôte au moment du
+test, le nœud kind consommant à lui seul ~2,8 Gio. La procédure passe dans ces
+conditions, sans ajustement de `resources` ni réduction de replicas.
+
+État atteint, reproduit à l'identique : **9/9 Pods Running et Ready** —
+`postgres-0`, `neo4j-0`, `vault-0`, plus 2 replicas de chacun des trois
+services. PVC `Bound`, les trois hosts de l'Ingress en HTTP 200 sur
+`/actuator/health`, `db: UP` côté identity et `neo4j: UP` côté travel.
+Load-balancing re-vérifié : 11 requêtes réparties **6 / 5** sur les deux IP de
+Pod, identiques aux deux entrées de l'EndpointSlice.
+
+Un troisième comportement, non vu lors du premier test, est apparu :
+
+3. **`travel-service` : un replica sur deux échoue au tout premier démarrage**,
+   sort en code 1, et réussit au redémarrage automatique. Cause réelle, lue dans
+   `kubectl logs --previous` :
+
+   ```
+   Neo.TransientError.Transaction.DeadlockDetected
+     at ...Neo4jSchemaInitializer.ensureDestinationIdUniqueConstraint(Neo4jSchemaInitializer.java:39)
+   ```
+
+   Les 2 replicas démarrent simultanément et exécutent *en même temps* la
+   création de la contrainte d'unicité sur une base Neo4j vierge ; Forseti
+   détecte l'interblocage sur `LABEL(0)` et sacrifie une des deux transactions.
+   Ce n'est **pas** un défaut des manifestes : c'est une course applicative dans
+   l'initialisation de schéma, qui ne se manifeste que sur une base neuve et que
+   seul le parallélisme rend visible. Kubernetes la rattrape de lui-même
+   (`restartPolicy: Always`, Pod Ready ~20 s plus tard, `RESTARTS 1`) — mais
+   compter sur le redémarrage n'est pas une correction. La correction propre est
+   côté code du service : rendre `Neo4jSchemaInitializer` tolérant au
+   `TransientError` (retry), ce qui relève du périmètre applicatif et non de ces
+   manifestes. Noté ici pour que le `RESTARTS 1` observable après un premier
+   déploiement ne soit pas pris pour un incident d'infrastructure.
+
+Contrairement au premier test, **ce cluster n'a pas été détruit** : le
+déploiement est en place et se réinspecte avec
+
+```bash
+kubectl -n travel-plan get pods
+```
+
+Les manifestes restent néanmoins rejouables de zéro par la procédure ci-dessus ;
+ils ne supposent aucun état préexistant.
 
 ## Différences conceptuelles avec le déploiement Compose
 
