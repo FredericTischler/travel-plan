@@ -10,8 +10,10 @@ galaxy_info:
     labels) + le config.xml d'UN job Pipeline declenche MANUELLEMENT qui joue
     `./mvnw test` sur identity-service. Le socket Docker est monte en
     LECTURE-ECRITURE (obligatoire : les tests utilisent Testcontainers).
-    Hors perimetre a ce stade : SonarQube, webhooks/pollSCM, pipelines
-    payment/travel, build & push d'image, agents Jenkins distincts.
+    Declenchement automatique possible en opt-in via poll SCM
+    (jenkins_scm_poll_enabled). Hors perimetre a ce stade : SonarQube, webhooks
+    (Jenkins n'a pas d'URL publique joignable depuis GitHub.com), jobs
+    multibranch / Pull Requests, build & push d'image, agents Jenkins distincts.
   license: MIT
   min_ansible_version: "2.15"
   platforms:

@@ -18,9 +18,10 @@
 #   - UN controleur Jenkins, TROIS jobs Pipeline (identity / payment / travel),
 #     tous declenches A LA MAIN, chacun jouant `./mvnw test` sur son module.
 #   - PAS de SonarQube (increment separe).
-#   - PAS de webhook / pollSCM / multibranch scan (declenchement manuel STRICT
-#     — c'est la garantie structurelle du projet, prouvee par le <triggers/>
-#     vide de CHACUN des 3 config.xml, asserte par Molecule).
+#   - PAS de webhook, PAS de multibranch scan. Declenchement MANUEL par defaut
+#     (<triggers/> vide dans CHACUN des 3 config.xml, asserte par Molecule).
+#     UNE SEULE derogation, OPT-IN et explicite : `jenkins_scm_poll_enabled`
+#     (poll SCM, cf. bloc dedie plus bas). Elle n'est jamais active par defaut.
 #   - PAS de build/push d'image Docker depuis Jenkins.
 #   - PAS d'agent Jenkins distinct : les builds tournent sur le controleur
 #     (cf. jenkins_mem_limit ci-dessous pour la consequence RAM).
@@ -146,10 +147,11 @@ jenkins_traefik_entrypoint: "websecure"
 #      Le role ne fabrique, ne stocke et ne rend AUCUNE cle : il ne rend que
 #      l'IDENTIFIANT du credential, qui n'est pas un secret.
 #
-# CE QUI NE CHANGE PAS ENTRE A ET B : le declenchement reste MANUEL STRICT.
-# Passer au remote n'amene NI webhook, NI pollSCM, NI scan multibranch, NI
-# mecanisme de Pull Request. Le <triggers/> du template reste vide dans les deux
-# modes — c'est la garantie structurelle du projet, assertee par Molecule.
+# CE QUI NE CHANGE PAS ENTRE A ET B : le declenchement. Basculer la SOURCE du
+# checkout n'amene NI webhook, NI poll, NI scan multibranch, NI mecanisme de Pull
+# Request. Le <triggers/> reste vide dans les deux modes tant que
+# `jenkins_scm_poll_enabled` (commutateur SEPARE, ci-dessous) vaut false —
+# assertee par Molecule sur les deux modes.
 #
 # Le defaut reste le mode A : meme discipline que les autres flags du projet
 # (`false`/vide par defaut, on n'active rien implicitement), et surtout le mode B
@@ -176,6 +178,58 @@ jenkins_scm_branch: "main"
 # Convention proposee (cf. README) : "github-deploy-key", type "SSH Username with
 # private key", username `git`.
 jenkins_scm_credential_id: ""
+
+# === Declenchement automatique : POLL SCM (opt-in) ==========================
+# Le sujet (docs/sujet.md) demande que les tests tournent "a chaque changement".
+# Deux facons de l'obtenir, et une seule est realisable ICI :
+#
+#   - WEBHOOK GitHub -> Jenkins : GitHub.com doit POUVOIR JOINDRE ce Jenkins en
+#     HTTP entrant. Or ce Jenkins tourne sur un poste de dev, sans port publie,
+#     derriere Traefik en https://jenkins.localhost avec un certificat
+#     AUTO-SIGNE : aucune URL publique, aucun DNS, aucun certificat que
+#     GitHub accepterait. Un webhook est donc STRUCTURELLEMENT inapplicable sans
+#     tunnel (ngrok/Cloudflare) — procedure documentee dans le README, NON
+#     implementee, et de toute facon elle exige une action dans les settings du
+#     depot GitHub, qui n'appartient pas a ce role.
+#   - POLL SCM : c'est Jenkins qui interroge le SCM. Aucun flux entrant, aucune
+#     action cote GitHub, 100% realisable par ce role. C'est ce qui est cable
+#     ici.
+#
+# DEFAUT `false` : meme discipline que TOUS les flags de ce role — on n'active
+# rien implicitement, et le declenchement manuel strict reste le comportement
+# livre par defaut (invariant asserte par Molecule). Activation explicite :
+#   ansible-playbook ... -e jenkins_scm_poll_enabled=true
+# (puis re-POST des 3 config.xml dans Jenkins : Ansible ne cree ni ne met a jour
+# les jobs — il n'a pas de credential Jenkins, cf. plus haut).
+#
+# TRADEOFFS DU POLL, assumes :
+#   - latence : un push est detecte au pire au bout d'une periode de poll (5 min
+#     ici), la ou un webhook declenche en ~1 s ;
+#   - cout : en mode B chaque poll est un `git ls-remote` SSH vers GitHub — ~288
+#     connexions/jour/job, negligeable et bien en-deca de toute limite ;
+#   - en mode A (miroir local file://) le poll voit les commits du CHECKOUT
+#     LOCAL, pas ceux pousses sur GitHub : le couple utile est donc
+#     poll + mode B (remote reel).
+#   - un poll ne declenche RIEN si le SHA de la branche n'a pas bouge : pas de
+#     build inutile.
+#   - CONSEQUENCE RAM A NE PAS OUBLIER : un push fait detecter le meme SHA par
+#     les TROIS jobs => 3 builds en file. Personne ne clique plus, donc la regle
+#     "un build a la fois" (cf. jenkins_mem_limit) doit etre tenue par le
+#     `numExecutors: 1` du controleur — reglage GLOBAL de Jenkins, dans le volume
+#     JENKINS_HOME, donc hors perimetre de ce role (procedure dans le README).
+#     Defaut Jenkins = 2 executeurs = 2 builds Maven dans 1600m => OOM probable.
+#   - le poll suit UNE branche (`jenkins_scm_branch`, `main`). Il ne couvre donc
+#     PAS les Pull Requests : cela exigerait un job multibranch, hors perimetre.
+jenkins_scm_poll_enabled: false
+
+# Syntaxe cron Jenkins (5 champs). `H` = hash du nom du job : les 3 jobs sont
+# ainsi decales dans les 5 minutes au lieu de poller tous a la meme seconde —
+# ce qui, sur ce controleur sans agent (1600m, 3 builds Maven possibles),
+# evite le scenario ou trois builds demarrent simultanement apres un push.
+# NE PAS descendre a 'H/1' : le poll n'est pas gratuit (un ls-remote SSH par
+# job et par minute), et 5 min reste sans commune mesure avec la duree d'un
+# build (~2 min).
+jenkins_scm_poll_cron: "H/5 * * * *"
 
 # --- DERIVE de la forme de l'URL : sommes-nous en mode miroir local ? --------
 # UNE SEULE source de verite pour les trois consequences du mode A :
@@ -235,17 +289,20 @@ jenkins_jobs:
   - name: "identity-service-test"
     description: >-
       Build + tests unitaires/integration d'identity-service (./mvnw test).
-      Declenchement MANUEL uniquement — aucun trigger SCM, aucun webhook.
+      Declenchement : MANUEL par defaut ; poll SCM opt-in
+      (jenkins_scm_poll_enabled). Jamais de webhook.
     script_path: "services/identity-service/Jenkinsfile"
   - name: "payment-service-test"
     description: >-
       Build + tests unitaires/integration de payment-service (./mvnw test,
       Testcontainers postgres:17.5-bookworm).
-      Declenchement MANUEL uniquement — aucun trigger SCM, aucun webhook.
+      Declenchement : MANUEL par defaut ; poll SCM opt-in
+      (jenkins_scm_poll_enabled). Jamais de webhook.
     script_path: "services/payment-service/Jenkinsfile"
   - name: "travel-service-test"
     description: >-
       Build + tests unitaires/integration de travel-service (./mvnw test,
       Testcontainers neo4j:5.26.6-community).
-      Declenchement MANUEL uniquement — aucun trigger SCM, aucun webhook.
+      Declenchement : MANUEL par defaut ; poll SCM opt-in
+      (jenkins_scm_poll_enabled). Jamais de webhook.
     script_path: "services/travel-service/Jenkinsfile"

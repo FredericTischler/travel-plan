@@ -45,3 +45,24 @@
     jenkins_docker_gid: "999"
   roles:
     - role: jenkins
+
+# 3e convergence, repertoire SEPARE encore : le declenchement automatique OPT-IN
+# par poll SCM. Sans ce passage, la branche "if jenkins_scm_poll_enabled" du
+# template ne serait jamais exercee — et c'est precisement la branche qui, mal
+# rendue, produirait un job qui ne se declenche jamais (spec vide) ou qui se
+# declenche en boucle.
+#
+# Combinee au mode remote GitHub, parce que c'est le SEUL couple qui a un sens :
+# poller le miroir local file:// ne verrait que les commits du checkout de la
+# machine, pas ce qui est pousse sur la source de verite.
+- name: Converge (mode opt-in poll SCM sur le remote GitHub)
+  hosts: all
+  gather_facts: false
+  vars:
+    jenkins_compose_dir: /tmp/travel-plan-jenkins-poll
+    jenkins_scm_url: "git@github.com:FredericTischler/travel-plan.git"
+    jenkins_scm_credential_id: "github-deploy-key"
+    jenkins_scm_poll_enabled: true
+    jenkins_docker_gid: "999"
+  roles:
+    - role: jenkins

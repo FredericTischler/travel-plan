@@ -7,9 +7,11 @@ docker-compose **orchestre**. Meme modele operatoire que `postgres` / `vault` /
 Ansible.
 
 **Increment CI/CD n°2 — generalisation multi-jobs.** Un controleur, **trois** jobs
-Pipeline declenches **a la main** (un par service : `identity-service`,
+Pipeline declenches **a la main par defaut** (un par service : `identity-service`,
 `payment-service`, `travel-service`), chacun jouant `./mvnw test` sur son module.
-C'est tout : toujours pas de webhook, pas de Sonar, pas d'image construite.
+Un **poll SCM opt-in** (`jenkins_scm_poll_enabled`) est le seul declenchement
+automatique disponible : pas de webhook (Jenkins n'a pas d'URL publique
+joignable depuis GitHub.com), pas de Sonar, pas d'image construite.
 
 ## Ce que le role fait
 - Rend `compose.jenkins.yml` : image **epinglee** `jenkins/jenkins:2.568.3-lts-jdk21`,
@@ -20,7 +22,8 @@ C'est tout : toujours pas de webhook, pas de Sonar, pas d'image construite.
   l'injecte en `group_add` — sans quoi le process jenkins (uid 1000) ne peut pas
   ecrire sur le socket et Testcontainers echoue en `EACCES`.
 - Rend **un `job-<nom>-config.xml` par entree de `jenkins_jobs`** : la definition
-  du job Pipeline, **prete a poster**, avec `<triggers/>` **vide**. Aujourd'hui :
+  du job Pipeline, **prete a poster**, avec `<triggers/>` **vide** par defaut
+  (ou un `SCMTrigger` si `jenkins_scm_poll_enabled=true`). Aujourd'hui :
   `job-identity-service-test-config.xml`, `job-payment-service-test-config.xml`,
   `job-travel-service-test-config.xml`.
 
@@ -38,8 +41,8 @@ template generique `templates/job-pipeline.xml.j2`.
 
 **Pourquoi une liste + un template, plutot que trois templates.** Les 3 jobs sont
 structurellement identiques : meme SCM `file://`, meme branche, meme retention,
-meme `<triggers/>` vide. Il n'existe donc **qu'un seul endroit** ou un trigger ou
-un credential pourrait se glisser — un seul endroit a auditer, et aucun job ne
+meme politique de declenchement. Il n'existe donc **qu'un seul endroit** ou un
+trigger ou un credential pourrait se glisser — un seul endroit a auditer, et aucun job ne
 peut deriver en silence. Trois copies auraient permis exactement l'inverse.
 
 **Ajouter un service au perimetre CI** = ajouter une entree a `jenkins_jobs` +
@@ -57,12 +60,16 @@ lancer un a la fois** (contrainte assumee de l'increment « pas d'agent dedie »
 
 ## Ce que le role NE fait PAS (assume, pas un oubli)
 - **Pas de SonarQube** — increment separe.
-- **Pas de webhook, pas de `pollSCM`, pas de multibranch scan, pas de mecanisme
-  de Pull Request** — declenchement **manuel strict**, sur **les trois** jobs, et
-  **y compris quand le SCM est le vrai remote GitHub** (mode B ci-dessous : seule
-  la **source** du checkout change, jamais le declenchement). Le `<triggers/>`
-  vide de chaque config.xml en est la preuve structurelle (asserte par Molecule,
-  job par job, **dans les deux modes**).
+- **Pas de webhook, pas de multibranch scan, pas de mecanisme de Pull Request.**
+  Un webhook supposerait que GitHub.com puisse **joindre** ce Jenkins : il n'a
+  aucune URL publique (poste local, Traefik, cert auto-signe). Detail et
+  procedure « pour plus tard » dans « Declenchement » ci-dessous.
+- **Declenchement manuel par defaut**, sur **les trois** jobs, et **y compris
+  quand le SCM est le vrai remote GitHub** (mode B : basculer la source ne change
+  rien au declenchement). Le `<triggers/>` vide de chaque config.xml en est la
+  preuve structurelle (asserte par Molecule, job par job, **dans les deux
+  modes**). **Seule derogation, opt-in et explicite : le poll SCM**
+  (`jenkins_scm_poll_enabled=true`), lui aussi asserte par Molecule sur les 3 jobs.
 - **Il ne cree, ne stocke et ne rend AUCUNE cle ni token.** En mode B il ne rend
   que **l'identifiant** du credential Jenkins ; la cle de deploiement est
   generee et deposee **a la main** par l'operateur (procedure en fin de fichier).
@@ -95,7 +102,7 @@ artisanal qui telecharge la distribution Maven en `.zip` et l'extrait avec `unzi
 | `jenkins_scm_repo_host_path` | **obligatoire** (bind-mount `:ro`) | inutile, non monte |
 | Credential Jenkins | **aucun** | cle de deploiement **lecture seule**, deposee **a la main** |
 | Ce que le job teste | ce qui est **commite en local** | ce qui est **pousse sur GitHub** |
-| Declenchement | **manuel strict** | **manuel strict** (inchange) |
+| Declenchement | inchange par le mode (commutateur **separe** : `jenkins_scm_poll_enabled`) | idem — basculer la source ne declenche rien de plus |
 
 Le mode est **derive de la forme de l'URL** (`jenkins_scm_local_mirror`), pas
 saisi separement : basculer ne demande pas de penser a retourner trois booleens —
@@ -110,10 +117,13 @@ tant que l'operateur n'a pas depose lui-meme le credential** dans Jenkins.
 - **Tradeoff du mode B** : le job teste la **source de verite**, au prix d'un
   secret a gerer dans Jenkins (que ce depot ne voit jamais : seul **l'identifiant**
   du credential est rendu, ce qui n'est pas un secret).
-- **Ce que le mode B n'apporte PAS, volontairement** : ni webhook, ni `pollSCM`,
-  ni scan multibranch, ni mecanisme de **Pull Request**. Seule la **source** du
-  checkout change. Le `<triggers/>` reste vide dans les deux modes — **asserte par
-  Molecule sur les deux**.
+- **Ce que le mode B n'apporte PAS, volontairement** : ni webhook, ni scan
+  multibranch, ni mecanisme de **Pull Request**, ni declenchement automatique.
+  Seule la **source** du checkout change ; le `<triggers/>` reste vide dans les
+  deux modes tant que `jenkins_scm_poll_enabled` vaut `false` — **asserte par
+  Molecule sur les deux**. Activer le poll est une decision **separee**
+  (section « Declenchement » ci-dessous), meme si c'est avec le mode B qu'elle a
+  le plus de sens.
 
 **Corollaire non evident du mode A, trouve en le cassant** : le git-plugin
 **refuse** par defaut un remote pointant sur un repertoire local
@@ -131,6 +141,78 @@ compte, et le seul repertoire local atteignable est un bind-mount **`:ro`**.
 > checkout hote disparait du fragment pour la meme raison (plus rien a monter, et
 > pas d'elargissement gratuit de la surface du conteneur). Les deux points sont
 > assertes par Molecule en mode B.
+
+### Declenchement : manuel par defaut, **poll SCM** en opt-in (pas de webhook)
+
+Le sujet demande que les tests tournent **a chaque changement**. Deux facons
+d'obtenir ca — **une seule est realisable ici**.
+
+| | **Webhook GitHub -> Jenkins** | **Poll SCM** (implemente, opt-in) |
+|---|---|---|
+| Sens du flux | GitHub **appelle** Jenkins (entrant) | Jenkins **interroge** GitHub (sortant) |
+| Prerequis reseau | URL **publique** + DNS + certificat valide | aucun |
+| Prerequis GitHub | creer un webhook dans les *settings* du depot | **aucune action** |
+| Latence apres un push | ~1 s | jusqu'a 5 min (periode de poll) |
+| Faisable par ce role | **non** | **oui, de bout en bout** |
+
+**Pourquoi pas le webhook, concretement.** Ce Jenkins tourne sur un poste de dev :
+aucun port publie, UI exposee en `https://jenkins.localhost` derriere Traefik avec
+un certificat **auto-signe**. `jenkins.localhost` resout en `127.0.0.1` — depuis
+GitHub.com, il n'existe ni adresse joignable, ni nom DNS, ni certificat
+acceptable. Un webhook ne serait pas « pas encore configure » : il serait
+**structurellement injoignable**. Il faudrait d'abord un tunnel (ngrok /
+Cloudflare Tunnel) *et* une action manuelle dans les settings du depot GitHub —
+deux choses qui n'appartiennent pas a ce role (cf. « Si un jour un webhook » plus
+bas).
+
+**Ce que fait le poll.** `jenkins_scm_poll_enabled=true` rend, **pour les trois
+jobs a la fois** (un seul template), un trigger `hudson.triggers.SCMTrigger` de
+spec `jenkins_scm_poll_cron` (defaut `H/5 * * * *`). Jenkins fait un
+`git ls-remote` sur la branche suivie et ne declenche un build **que si le SHA a
+change** : un poll sans commit ne cree **aucun** build (verifie : le journal de
+poll affiche `already built by #12` / `No changes`).
+
+```bash
+ansible-playbook ansible/roles/jenkins/test-local.yml -K \
+  -e jenkins_scm_url=git@github.com:FredericTischler/travel-plan.git \
+  -e jenkins_scm_credential_id=github-deploy-key \
+  -e jenkins_scm_poll_enabled=true
+# puis re-POSTer les 3 config.xml (Ansible ne met PAS a jour les jobs : cf. §4
+# de la sequence rejouable, variante /job/<nom>/config.xml)
+```
+
+**Defaut `false`**, meme discipline que tous les flags du role : rien ne
+s'active implicitement, et le declenchement manuel strict reste ce qui est livre
+par defaut (asserte par Molecule). Le flag est **orthogonal** au mode A/B : c'est
+un commutateur separe de `jenkins_scm_url`, parce que « quelle source » et « quand
+declencher » sont deux decisions independantes.
+
+**Tradeoffs assumes.**
+- **Latence** : jusqu'a 5 min contre ~1 s pour un webhook. Sur un projet mono-dev,
+  c'est sans consequence pratique.
+- **`H/5` plutot que `H/2` ou `H/1`** : chaque poll est un `ls-remote` SSH ; 5 min
+  reste bien plus court que la duree d'un build (~2 min) et evite d'empiler des
+  polls. `H` (hash du nom du job) **decale les 3 jobs** dans la fenetre au lieu de
+  les faire poller a la meme seconde — utile ici, ou 3 builds simultanes dans une
+  cgroup de 1600m signifient un OOM.
+- **Couple utile = poll + mode B.** En mode A (miroir `file://`), le poll ne voit
+  que les commits du **checkout local**, pas ce qui est pousse. Activer le poll a
+  du sens surtout sur le remote reel.
+- **Une seule branche** (`jenkins_scm_branch`, `main`). Le poll **ne couvre pas
+  les Pull Requests** : cela demanderait un job *multibranch* + le plugin
+  `github-branch-source`, hors perimetre — et le scan de PR sur un fork public
+  ferait tourner du code tiers sur un Jenkins qui a le socket Docker.
+
+**Si un jour un webhook devient possible** (Jenkins expose via un tunnel HTTPS) :
+installer le plugin `github`, cocher *GitHub hook trigger for GITScm polling* sur
+chaque job (`<com.cloudbees.jenkins.GitHubPushTrigger>` dans le `config.xml`),
+puis creer le webhook **cote GitHub** (*Settings → Webhooks → Add webhook*, URL
+`https://<tunnel>/github-webhook/`, content type `application/json`, evenement
+`push`). Cette derniere etape est une modification des **parametres du depot
+GitHub** : elle appartient a l'operateur, exactement comme le depot de la deploy
+key — ce role ne touche jamais a GitHub. Le poll peut alors etre desactive
+(`jenkins_scm_poll_enabled=false`) ou conserve comme **filet** en cas de webhook
+perdu (c'est meme le reglage recommande : un webhook rate est silencieux).
 
 ### UI : route Traefik, PAS de port publie
 `https://jenkins.localhost/` via les labels Docker, **meme idiome que
@@ -218,23 +300,31 @@ d'environnement (zero secret).
 
 Cote jobs, depuis l'increment n°2, les assertions bouclent sur **les trois**
 config.xml : chacun doit pointer sur **son** `Jenkinsfile` (et sur lui seul :
-un copier-coller rate se verrait), porter un `<triggers/>` **vide**, et ne
+un copier-coller rate se verrait), porter un `<triggers/>` **vide** (defaut), et ne
 contenir **ni credential, ni Sonar, ni Docker**. Une derniere assertion verifie
 que le repertoire de rendu contient **exactement** le fragment + 3 `config.xml`
 et rien d'autre — un fichier orphelin trahirait un job retire de `jenkins_jobs`
 mais laisse sur le disque (le role ne nettoie pas ce qu'il ne gere plus : c'est
 l'operateur qui supprime le fichier **et** l'item Jenkins).
 
-Le scenario converge **deux fois**, dans deux repertoires distincts : le mode A
-(reference) puis le **mode B** avec `jenkins_scm_url=git@github.com:...` et
-`jenkins_scm_credential_id=github-deploy-key`. Sans ce 2e passage, la branche
-opt-in du template ne serait jamais exercee. Le mode B asserte : remote reel +
+Le scenario converge **trois fois**, dans trois repertoires distincts : le mode A
+(reference), le **mode B** avec `jenkins_scm_url=git@github.com:...` et
+`jenkins_scm_credential_id=github-deploy-key`, puis le **poll SCM** (mode B +
+`jenkins_scm_poll_enabled=true`). Sans ces passages, les branches opt-in du
+template ne seraient jamais exercees. Le mode B asserte : remote reel +
 `<credentialsId>` **reference seule** (aucune `PRIVATE KEY`, aucun `file://`),
 `<triggers/>` **toujours vide** (le point dur : passer au remote ne doit rien
 declencher automatiquement), **plus de bind-mount** du depot et
 **`ALLOW_LOCAL_CHECKOUT` absent** de `JAVA_OPTS`. Le mode B n'est jamais convergé
 avec `jenkins_scm_repo_host_path` : prouver qu'il **n'est plus requis** fait
 partie du contrat.
+
+Le 3e passage asserte que le `SCMTrigger` de spec `H/5 * * * *` est rendu sur
+**les trois** jobs (pas seulement le premier), avec une spec **non vide** — une
+spec vide donne un XML valide qui ne polle **jamais**, la panne silencieuse type —
+et qu'activer le poll n'a fait apparaitre **ni webhook ni multibranch** par effet
+de bord. Cote role, une garde `assert` echoue **fail-fast** si le poll est active
+avec un cron vide.
 
 ```bash
 export PATH="$PWD/.venv-ansible/bin:$PATH"
@@ -389,7 +479,68 @@ done
 > Equivalent UI, si tu preferes cliquer : *New Item* → nom `<service>-service-test`
 > → *Pipeline* → *Pipeline script from SCM* → SCM `Git`, URL
 > `file:///srv/travel-plan-repo`, branche `*/main`, *Script Path*
-> `services/<service>-service/Jenkinsfile`, **aucun** trigger coche.
+> `services/<service>-service/Jenkinsfile`, et **aucun** trigger coche (ou *Poll
+> SCM* `H/5 * * * *` si tu actives le poll).
+
+### 4bis. Activer le **poll SCM** sur des jobs deja crees
+
+C'est exactement la variante « mise a jour » ci-dessus, jouee sur les 3 jobs
+apres un `ansible-playbook ... -e jenkins_scm_poll_enabled=true`. Le trigger
+**remplace** `<triggers/>` ; rien d'autre ne bouge dans le `config.xml`.
+
+```bash
+for JOB in identity-service-test payment-service-test travel-service-test; do
+  docker cp "/opt/travel-plan/jenkins/job-${JOB}-config.xml" \
+            "travel-plan-jenkins:/tmp/job-${JOB}.xml" >/dev/null
+  docker exec -e JOB="$JOB" travel-plan-jenkins bash -c '
+  PW=$(cat /var/jenkins_home/secrets/initialAdminPassword)
+  CRUMB=$(curl -s -u "admin:$PW" -c /tmp/ck \
+    "http://localhost:8080/crumbIssuer/api/xml?xpath=concat(//crumbRequestField,\":\",//crumb)")
+  curl -s -o /dev/null -w "update $JOB: %{http_code}\n" -u "admin:$PW" -b /tmp/ck -H "$CRUMB" \
+    -H "Content-Type: application/xml" --data-binary @/tmp/job-$JOB.xml \
+    "http://localhost:8080/job/$JOB/config.xml"
+  '
+done
+# attendu : update <job>: 200  (x3)
+```
+
+Verifier que Jenkins a bien **repris** le trigger (et pas seulement le fichier) :
+
+```bash
+for JOB in identity-service-test payment-service-test travel-service-test; do
+  docker exec -e JOB="$JOB" travel-plan-jenkins bash -c '
+  PW=$(cat /var/jenkins_home/secrets/initialAdminPassword)
+  echo -n "$JOB: "
+  curl -s -u "admin:$PW" "http://localhost:8080/job/$JOB/config.xml" | grep -c SCMTrigger'
+done
+# attendu : 2 occurrences (balise ouvrante + fermante) par job
+```
+
+Forcer un poll immediat et lire son journal (sans attendre 5 min) :
+
+```bash
+docker exec travel-plan-jenkins bash -c '
+PW=$(cat /var/jenkins_home/secrets/initialAdminPassword)
+CRUMB=$(curl -s -u "admin:$PW" -c /tmp/ck \
+  "http://localhost:8080/crumbIssuer/api/xml?xpath=concat(//crumbRequestField,\":\",//crumb)")
+curl -s -o /dev/null -w "poll: %{http_code}\n" -u "admin:$PW" -b /tmp/ck -H "$CRUMB" \
+  -X POST http://localhost:8080/job/identity-service-test/polling
+sleep 15
+tail -5 /var/jenkins_home/jobs/identity-service-test/scm-polling.log'
+```
+
+Sortie obtenue sur ce poste (mode B, deploy key en place) :
+
+```
+ > git ls-remote -h -- git@github.com:FredericTischler/travel-plan.git # timeout=10
+[poll] Latest remote head revision on refs/heads/main is: 125a176... - already built by 12
+Done. Took 13 sec
+No changes
+```
+
+C'est la preuve des deux moities : le poll **s'authentifie** avec la deploy key
+et lit le vrai remote, **et** il ne declenche **rien** quand le SHA n'a pas
+bouge. Revenir au manuel = rejouer le playbook sans le flag et re-POSTer.
 
 ## 5. Declencher les builds **a la main**, UN A LA FOIS
 
@@ -410,6 +561,31 @@ curl -s -D - -o /dev/null -u "admin:$PW" -b /tmp/ck -H "$CRUMB" \
 > job contre lui-meme, pas contre ses voisins : 3 builds simultanes = 3 JVM Maven
 > + 3 JVM Surefire dans la cgroup de 1600m, plus 2 postgres et 1 neo4j de test
 > cote hote. On attend `result != null` avant de lancer le suivant.
+
+> **Corollaire DIRECT de l'activation du poll — a ne pas sauter.** Un push sur
+> `main` fait detecter le meme SHA par les **trois** jobs : trois builds sont mis
+> en file. La discipline « un a la fois » ne peut alors plus reposer sur
+> l'operateur, puisque plus personne ne clique. Il faut la faire tenir par le
+> **nombre d'executeurs du controleur** : `numExecutors: 1` (le defaut Jenkins est
+> **2**, soit 2 JVM Maven + 2 JVM Surefire dans la cgroup de 1600m => OOM
+> probable). Avec 1 executeur, les 3 builds **se serialisent** (~6 min au total
+> apres un push) au lieu de se marcher dessus.
+>
+> C'est un reglage **global de Jenkins** (`JENKINS_HOME/config.xml`), donc **hors
+> du perimetre de ce role** : Ansible ne gere pas le contenu du volume nomme, et
+> l'ecrire exigerait un credential Jenkins cote Ansible. A appliquer une fois, a
+> la main :
+>
+> ```bash
+> docker exec travel-plan-jenkins bash -c '
+> PW=$(cat /var/jenkins_home/secrets/initialAdminPassword)
+> CRUMB=$(curl -s -u "admin:$PW" -c /tmp/ck \
+>   "http://localhost:8080/crumbIssuer/api/xml?xpath=concat(//crumbRequestField,\":\",//crumb)")
+> curl -s -u "admin:$PW" -b /tmp/ck -H "$CRUMB" -X POST --data-urlencode \
+>  "script=def j=jenkins.model.Jenkins.get(); j.setNumExecutors(1); j.save(); println(j.getNumExecutors())" \
+>  http://localhost:8080/scriptText'
+> # attendu : 1
+> ```
 
 ## 6. Suivre et confirmer
 
@@ -485,10 +661,11 @@ cache `~/.m2` sont deja la au prochain `up`. Les etapes 3 et 4 ne se rejouent pa
 > supporte. Ce mode-ci fait tester a Jenkins **ce qui est pousse sur GitHub** au
 > lieu de ce qui est commite dans le checkout de la machine.
 >
-> **Ce qu'il n'apporte PAS, volontairement** : aucun webhook, aucun `pollSCM`,
-> aucun scan multibranch, **aucun mecanisme de Pull Request**. Le declenchement
-> reste **100 % manuel** (bouton *Build Now* / CLI). **Seule la source du
-> checkout change.**
+> **Ce qu'il n'apporte PAS, volontairement** : aucun webhook, aucun scan
+> multibranch, **aucun mecanisme de Pull Request**, et **aucun declenchement
+> automatique** — **seule la source du checkout change**. Le declenchement reste
+> manuel (bouton *Build Now* / CLI) sauf si l'on active **separement** le poll
+> SCM (`jenkins_scm_poll_enabled=true`, cf. section « Declenchement »).
 
 ## Pourquoi c'est manuel (et pourquoi ca le restera)
 

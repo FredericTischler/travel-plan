@@ -169,6 +169,25 @@
       {{ jenkins_jobs | map(attribute='name') | join(', ') }}
   tags: [job_definition]
 
+# Garde fail-fast du SEUL declencheur automatique du role (opt-in). Un cron vide
+# rendrait <spec></spec> : Jenkins accepte le XML mais ne polle JAMAIS — une CI
+# silencieusement morte, exactement le genre de panne qu'on ne voit qu'au moment
+# ou on comptait dessus. `assert` ne rapporte jamais `changed` : idempotence
+# preservee.
+- name: "Assert: poll SCM active => cron Jenkins non vide"
+  ansible.builtin.assert:
+    that:
+      - jenkins_scm_poll_cron | default('', true) | trim | length > 0
+    fail_msg: >-
+      jenkins_scm_poll_enabled=true mais jenkins_scm_poll_cron est vide : le job
+      serait rendu avec un <spec/> vide et ne pollerait jamais. Fournir un cron
+      Jenkins a 5 champs, ex. 'H/5 * * * *'.
+    success_msg: >-
+      Poll SCM actif : spec '{{ jenkins_scm_poll_cron }}' pour les
+      {{ jenkins_jobs | length }} jobs.
+  when: jenkins_scm_poll_enabled | bool
+  tags: [job_definition]
+
 # UN SEUL template generique pour les 3 jobs : le <triggers/> vide et l'absence
 # de credential n'existent qu'a UN endroit, donc aucun job ne peut deriver sans
 # que les 3 derivent (et Molecule asserte les 3).

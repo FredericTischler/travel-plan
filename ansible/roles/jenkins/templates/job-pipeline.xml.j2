@@ -15,9 +15,16 @@
 
   POINTS NON NEGOCIABLES, VISIBLES DANS LE XML — ET VRAIS POUR LES 3 JOBS,
   puisqu'ils sont ecrits ICI, dans l'unique source de tous les config.xml :
-    - <triggers/> VIDE  => declenchement MANUEL strict. Aucun pollSCM, aucun
-      webhook, aucun scan multibranch. C'est la preuve structurelle, pas une
-      promesse en commentaire. Un seul endroit a auditer pour les 3 jobs.
+    - DECLENCHEMENT : par DEFAUT <triggers/> VIDE => manuel strict. Aucun
+      pollSCM, aucun webhook, aucun scan multibranch. C'est la preuve
+      structurelle, pas une promesse en commentaire, et il n'y a qu'UN endroit a
+      auditer pour les 3 jobs.
+      SEULE derogation possible, OPT-IN et explicite : `jenkins_scm_poll_enabled`
+      rend un SCMTrigger (poll SCM) avec le cron `jenkins_scm_poll_cron`. Jamais
+      de webhook rendu ici : un webhook suppose que GitHub.com puisse JOINDRE ce
+      Jenkins, qui n'a pas d'URL publique (local, derriere Traefik, cert
+      auto-signe). Le poll est le seul declencheur automatique realisable
+      entierement cote Jenkins.
     - Aucun <credentialsId> dans userRemoteConfigs TANT QUE
       `jenkins_scm_credential_id` est vide (defaut) => ZERO secret : le SCM est
       alors un miroir local monte en lecture seule, transport file://.
@@ -58,8 +65,9 @@
           <!-- Remote distant : le job clone la source de verite. Le checkout
                s'authentifie via l'entree du credential store referencee
                ci-dessous (cle privee stockee par l'operateur DANS Jenkins,
-               jamais dans ce depot). Le declenchement reste MANUEL : voir le
-               bloc triggers vide plus bas. -->
+               jamais dans ce depot). Ce meme credential sert AUSSI au poll SCM
+               quand il est actif (le poll fait un `git ls-remote` authentifie).
+               -->
 {% endif %}
           <url>{{ jenkins_scm_url }}</url>
 {% if jenkins_scm_credential_id | length > 0 %}
@@ -80,8 +88,25 @@
     <scriptPath>{{ job.script_path }}</scriptPath>
     <lightweight>false</lightweight>
   </definition>
-  <!-- VIDE, ET CA DOIT LE RESTER POUR LES TROIS JOBS :
-       declenchement MANUEL uniquement (bouton "Build Now" / CLI `build`). -->
+{% if jenkins_scm_poll_enabled | bool %}
+  <!-- POLL SCM ACTIF (opt-in `jenkins_scm_poll_enabled=true`, identique pour les
+       3 jobs). Jenkins interroge le SCM selon le cron ci-dessous et ne declenche
+       un build QUE si le SHA de la branche suivie a change : un poll sans commit
+       ne cree aucun build. Toujours AUCUN webhook (Jenkins n'a pas d'URL
+       publique joignable depuis GitHub.com) et aucun scan multibranch.
+       `ignorePostCommitHooks` false : sans consequence ici (aucun hook
+       /git/notifyCommit n'est emis vers ce Jenkins), on garde la valeur par
+       defaut du plugin plutot qu'un reglage sans effet. -->
+  <triggers>
+    <hudson.triggers.SCMTrigger>
+      <spec>{{ jenkins_scm_poll_cron }}</spec>
+      <ignorePostCommitHooks>false</ignorePostCommitHooks>
+    </hudson.triggers.SCMTrigger>
+  </triggers>
+{% else %}
+  <!-- VIDE : declenchement MANUEL uniquement (bouton "Build Now" / CLI `build`).
+       C'est le DEFAUT du role, et il vaut pour les trois jobs a la fois. -->
   <triggers/>
+{% endif %}
   <disabled>false</disabled>
 </flow-definition>

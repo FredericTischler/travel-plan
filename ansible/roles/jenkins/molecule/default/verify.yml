@@ -215,7 +215,9 @@
       vars:
         job_cfg: "{{ item.content | b64decode }}"
 
-    # LE point non negociable du projet : declenchement MANUEL strict, sur les 3.
+    # Le DEFAUT du role : declenchement MANUEL strict, sur les 3. Le poll SCM
+    # existe mais est opt-in — s'il fuitait dans les defaults, cette assertion
+    # tombe (section 4 ci-dessous couvre la branche activee).
     - name: "Assert each job: <triggers/> VIDE (aucun webhook, pollSCM, timer)"
       ansible.builtin.assert:
         that:
@@ -351,3 +353,47 @@
           Mode GitHub : aucun bind-mount du depot, ALLOW_LOCAL_CHECKOUT absent OK.
       vars:
         gh_svc: "{{ (gh_b64.results[0].content | b64decode | from_yaml).services.jenkins }}"
+
+    # =====================================================================
+    # 4) MODE OPT-IN "poll SCM" (3e converge, repertoire encore separe)
+    #
+    # Le seul declenchement AUTOMATIQUE que ce role sait produire, et le seul
+    # realisable dans ce contexte : Jenkins n'a pas d'URL publique joignable
+    # depuis GitHub.com (poste local, Traefik, cert auto-signe), donc pas de
+    # webhook. Ce qu'on prouve ici :
+    #   - le trigger est rendu pour LES TROIS jobs (pas seulement le premier) ;
+    #   - c'est bien un SCMTrigger avec une spec NON VIDE (une spec vide donne
+    #     un XML valide qui ne polle jamais : la panne silencieuse) ;
+    #   - activer le poll n'a PAS fait apparaitre un webhook ou un multibranch
+    #     par effet de bord.
+    # =====================================================================
+    - name: "Read the poll-mode job configs (3 jobs)"
+      ansible.builtin.slurp:
+        src: "/tmp/travel-plan-jenkins-poll/job-{{ item }}-config.xml"
+      loop:
+        - identity-service-test
+        - payment-service-test
+        - travel-service-test
+      register: poll_b64
+
+    - name: "Assert poll mode: SCMTrigger 'H/5 * * * *' rendu sur CHAQUE job"
+      ansible.builtin.assert:
+        that:
+          - "'<hudson.triggers.SCMTrigger>' in poll_job"
+          - "'<spec>H/5 * * * *</spec>' in poll_job"
+          - "'<triggers/>' not in poll_job"
+          # Le poll ne doit rien amener d'autre : ni webhook, ni scan de
+          # branches, ni build periodique inconditionnel.
+          - "'GitHubPushTrigger' not in poll_job"
+          - "'TimerTrigger' not in poll_job"
+          - "'branch-source' not in poll_job"
+        fail_msg: >-
+          Le job {{ item.item }} en mode poll ne porte pas un SCMTrigger a spec
+          non vide (ou porte un trigger hors perimetre).
+        success_msg: >-
+          {{ item.item }} : SCMTrigger H/5 seul, ni webhook ni multibranch OK.
+      loop: "{{ poll_b64.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      vars:
+        poll_job: "{{ item.content | b64decode }}"
