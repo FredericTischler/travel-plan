@@ -144,6 +144,20 @@ pipeline {
         // serveur qui calcule ensuite les issues et le gate, de facon
         // ASYNCHRONE. Sans cette attente, un `sonar:sonar` vert ne dit
         // strictement rien de la qualite du code.
+        //
+        // PIEGE REEL, rencontre sur cette instance : interroger
+        // `qualitygates/project_status?projectKey=...` SANS ancrer sur la
+        // tache d'analyse precise renvoie le statut de la DERNIERE analyse
+        // CONNUE du serveur, qui reste celui de l'analyse precedente tant
+        // que le Compute Engine n'a pas fini de traiter le rapport qu'on
+        // vient d'envoyer. Un build a echoue sur un gate ERROR perime alors
+        // que la nouvelle analyse (deja verte) etait encore en cours de
+        // calcul. Fix : on capture le `ceTaskId` du rapport
+        // (target/sonar/report-task.txt, ecrit par le stage precedent),
+        // on attend que `api/ce/task?id=...` passe a SUCCESS, on en tire
+        // l'`analysisId` DE CETTE analyse, et c'est CE seul identifiant
+        // qu'on interroge sur `qualitygates/project_status` — jamais le
+        // projectKey seul.
         stage('Quality gate') {
             when {
                 expression { return env.SONAR_HOST_URL?.trim() }
@@ -152,25 +166,42 @@ pipeline {
                 SONAR_TOKEN = credentials('sonarqube-token')
             }
             steps {
-                // curl est present dans l'image jenkins/jenkins:lts (base
-                // Debian). `set -e` + test explicite sur la valeur : un
-                // status ERROR fait echouer le build, comme attendu.
-                sh '''
-                    set -e
-                    key=travel-plan-identity-service
-                    for i in $(seq 1 60); do
-                      status=$(curl -sf -u "$SONAR_TOKEN:" \
-                        "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=$key" \
-                        | grep -oE '"status":"[A-Z_]*"' | head -1 | cut -d'"' -f4)
-                      case "$status" in
-                        OK)    echo "Quality gate: OK"; exit 0 ;;
-                        ERROR) echo "Quality gate: ERROR"; exit 1 ;;
-                        *)     echo "Quality gate pas encore calcule ($status), attente..."; sleep 5 ;;
-                      esac
-                    done
-                    echo "Timeout: le Compute Engine n a pas rendu de quality gate en 5 min"
-                    exit 1
-                '''
+                dir('services/identity-service') {
+                    // curl est present dans l'image jenkins/jenkins:lts
+                    // (base Debian). `set -e` + test explicite sur la
+                    // valeur : un status ERROR fait echouer le build.
+                    sh '''
+                        set -e
+                        ce_task_id=$(grep '^ceTaskId=' target/sonar/report-task.txt | cut -d= -f2)
+
+                        ce_status=""
+                        ce_response=""
+                        for i in $(seq 1 60); do
+                          ce_response=$(curl -sf -u "$SONAR_TOKEN:" \
+                            "$SONAR_HOST_URL/api/ce/task?id=$ce_task_id")
+                          ce_status=$(echo "$ce_response" | grep -oE '"status":"[A-Z]*"' | head -1 | cut -d'"' -f4)
+                          case "$ce_status" in
+                            SUCCESS) break ;;
+                            FAILED|CANCELED) echo "Tache Compute Engine terminee en $ce_status"; exit 1 ;;
+                            *) echo "Tache Compute Engine pas encore terminee ($ce_status), attente..."; sleep 5 ;;
+                          esac
+                        done
+                        if [ "$ce_status" != "SUCCESS" ]; then
+                          echo "Timeout: le Compute Engine n a pas termine la tache $ce_task_id en 5 min"
+                          exit 1
+                        fi
+
+                        analysis_id=$(echo "$ce_response" | grep -oE '"analysisId":"[^"]*"' | head -1 | cut -d'"' -f4)
+                        status=$(curl -sf -u "$SONAR_TOKEN:" \
+                            "$SONAR_HOST_URL/api/qualitygates/project_status?analysisId=$analysis_id" \
+                            | grep -oE '"status":"[A-Z_]*"' | head -1 | cut -d'"' -f4)
+
+                        case "$status" in
+                          OK) echo "Quality gate: OK"; exit 0 ;;
+                          *)  echo "Quality gate: $status"; exit 1 ;;
+                        esac
+                    '''
+                }
             }
         }
     }
